@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 重构推送逻辑，将详情页渲染职责完全移交给 `go-wxpush`。
 - 更新 `template_name` 机制，替代原有的 `custom_html` Base64 方案。
 - 优化管理后台 UI，提升响应式体验。
+- 合并并清理数据库迁移文件，统一为全量初始化脚本。
 
 ### Fixed
 - 修复编辑任务时 AppSecret 丢失的问题。

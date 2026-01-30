@@ -57,7 +57,7 @@ export default {
         }
 
         // 自定义详情页功能已移交给 go-wxpush 服务
-        // cf-reminder 仅通过 template_name 引用 go-wxpush 中的模板
+        // never-forget 仅通过 template_name 引用 go-wxpush 中的模板
 
         // 公共推送接口 (兼容 go-wxpush)
         if (path === '/wxsend') {

@@ -445,4 +445,4 @@ export const DETAIL_HTML = `<!DOCTYPE html>
 </body>
 </html>`;
 // 自定义 HTML 渲染功能已移交给 go-wxpush 服务
-// cf-reminder 仅通过 template_name 引用 go-wxpush 中的模板
+// never-forget 仅通过 template_name 引用 go-wxpush 中的模板
