@@ -10,13 +10,14 @@ export function TaskList() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [statusFilter, setStatusFilter] = useState<string>('all');
+    const [typeFilter, setTypeFilter] = useState<string>('all');
     const [total, setTotal] = useState(0);
     const [page, setPage] = useState(0);
     const pageSize = 10;
 
     useEffect(() => {
         loadTasks();
-    }, [statusFilter, page]);
+    }, [statusFilter, typeFilter, page]);
 
     const loadTasks = async () => {
         try {
@@ -25,6 +26,7 @@ export function TaskList() {
 
             const res = await reminderApi.list({
                 status: statusFilter === 'all' ? undefined : statusFilter,
+                type: typeFilter === 'all' ? undefined : typeFilter,
                 limit: pageSize,
                 offset: page * pageSize,
             });
@@ -41,13 +43,17 @@ export function TaskList() {
     };
 
     // 删除任务
-    const handleDelete = async (id: string, title: string) => {
-        if (!confirm(`确定要删除任务 "${title}" 吗？此操作不可恢复。`)) {
+    const handleDelete = async (task: Reminder) => {
+        if (task.type === 'email_sync') {
+            alert('这是一个邮箱同步任务，请在"邮箱中心"管理或删除对应的邮箱账户。');
+            return;
+        }
+        if (!confirm(`确定要删除任务 "${task.title}" 吗？此操作不可恢复。`)) {
             return;
         }
 
         try {
-            await reminderApi.delete(id);
+            await reminderApi.delete(task.id);
             loadTasks();
         } catch (err) {
             alert(err instanceof Error ? err.message : '删除失败');
@@ -93,24 +99,47 @@ export function TaskList() {
             </div>
 
             {/* 筛选选项卡 */}
-            <div className="tabs">
-                {[
-                    { value: 'all', label: '全部' },
-                    { value: 'active', label: '运行中' },
-                    { value: 'paused', label: '已暂停' },
-                    { value: 'completed', label: '已完成' },
-                ].map((tab) => (
-                    <button
-                        key={tab.value}
-                        className={`tab ${statusFilter === tab.value ? 'active' : ''}`}
-                        onClick={() => {
-                            setStatusFilter(tab.value);
-                            setPage(0);
-                        }}
-                    >
-                        {tab.label}
-                    </button>
-                ))}
+            <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', marginBottom: '20px' }}>
+                {/* 状态筛选 */}
+                <div className="tabs" style={{ flex: 1, minWidth: '280px' }}>
+                    {[
+                        { value: 'all', label: '全部' },
+                        { value: 'active', label: '运行中' },
+                        { value: 'paused', label: '已暂停' },
+                        { value: 'completed', label: '已完成' },
+                    ].map((tab) => (
+                        <button
+                            key={tab.value}
+                            className={`tab ${statusFilter === tab.value ? 'active' : ''}`}
+                            onClick={() => {
+                                setStatusFilter(tab.value);
+                                setPage(0);
+                            }}
+                        >
+                            {tab.label}
+                        </button>
+                    ))}
+                </div>
+
+                {/* 类型筛选 */}
+                <div className="tabs" style={{ minWidth: '200px' }}>
+                    {[
+                        { value: 'all', label: '全部类型' },
+                        { value: 'reminder', label: '定时任务' },
+                        { value: 'email_sync', label: '邮件任务' },
+                    ].map((tab) => (
+                        <button
+                            key={tab.value}
+                            className={`tab ${typeFilter === tab.value ? 'active' : ''}`}
+                            onClick={() => {
+                                setTypeFilter(tab.value);
+                                setPage(0);
+                            }}
+                        >
+                            {tab.label}
+                        </button>
+                    ))}
+                </div>
             </div>
 
             {/* 任务列表 */}
@@ -133,9 +162,9 @@ export function TaskList() {
                         <div className="empty-state-icon">📋</div>
                         <div className="empty-state-title">暂无任务</div>
                         <div className="empty-state-text">
-                            {statusFilter === 'all'
+                            {statusFilter === 'all' && typeFilter === 'all'
                                 ? '还没有创建任何定时任务'
-                                : `没有${statusFilter === 'active' ? '运行中' : statusFilter === 'paused' ? '已暂停' : '已完成'}的任务`}
+                                : `没有${typeFilter === 'all' ? '' : typeFilter === 'reminder' ? '定时' : '邮件'}${statusFilter === 'all' ? '' : statusFilter === 'active' ? '运行中' : statusFilter === 'paused' ? '已暂停' : '已完成'}的任务`}
                         </div>
                         <Link to="/create" className="btn btn-primary">
                             创建第一个任务
@@ -176,7 +205,15 @@ export function TaskList() {
                                                         : task.content}
                                                 </div>
                                             </td>
-                                            <td>{getScheduleTypeLabel(task.schedule_type)}</td>
+                                            <td>
+                                                {task.type === 'email_sync' ? (
+                                                    <span className="badge" style={{ background: 'rgba(var(--primary-rgb), 0.1)', color: 'var(--primary)' }}>
+                                                        📧 邮箱同步
+                                                    </span>
+                                                ) : (
+                                                    getScheduleTypeLabel(task.schedule_type)
+                                                )}
+                                            </td>
                                             <td style={{ fontFamily: 'var(--font-mono)', fontSize: '13px' }}>
                                                 {formatScheduleTime(task)}
                                             </td>
@@ -201,18 +238,34 @@ export function TaskList() {
                                                     >
                                                         👁
                                                     </Link>
-                                                    <Link
-                                                        to={`/tasks/${task.id}/edit`}
-                                                        className="btn btn-ghost btn-sm btn-icon"
-                                                        title="编辑任务"
-                                                    >
-                                                        ✏️
-                                                    </Link>
+                                                    {task.type === 'email_sync' ? (
+                                                        <Link
+                                                            to="/email"
+                                                            className="btn btn-ghost btn-sm btn-icon"
+                                                            title="在邮箱中心管理"
+                                                        >
+                                                            ⚙️
+                                                        </Link>
+                                                    ) : (
+                                                        <Link
+                                                            to={`/tasks/${task.id}/edit`}
+                                                            className="btn btn-ghost btn-sm btn-icon"
+                                                            title="编辑任务"
+                                                        >
+                                                            ✏️
+                                                        </Link>
+                                                    )}
                                                     {task.status !== 'completed' && (
                                                         <button
                                                             className="btn btn-ghost btn-sm btn-icon"
                                                             title={task.status === 'active' ? '暂停' : '恢复'}
-                                                            onClick={() => handleToggleStatus(task)}
+                                                            onClick={() => {
+                                                                if (task.type === 'email_sync') {
+                                                                    alert('请在邮箱中心管理同步状态');
+                                                                    return;
+                                                                }
+                                                                handleToggleStatus(task);
+                                                            }}
                                                         >
                                                             {task.status === 'active' ? '⏸' : '▶️'}
                                                         </button>
@@ -228,8 +281,8 @@ export function TaskList() {
                                                     <button
                                                         className="btn btn-ghost btn-sm btn-icon"
                                                         title="删除"
-                                                        onClick={() => handleDelete(task.id, task.title)}
-                                                        style={{ color: 'var(--error)' }}
+                                                        onClick={() => handleDelete(task)}
+                                                        style={{ color: 'var(--error)', opacity: task.type === 'email_sync' ? 0.3 : 1, cursor: task.type === 'email_sync' ? 'not-allowed' : 'pointer' }}
                                                     >
                                                         🗑
                                                     </button>

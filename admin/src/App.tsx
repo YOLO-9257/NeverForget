@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { Layout } from './components/Layout';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { Layout, AuthGuard } from './components';
 import { Dashboard } from './pages/Dashboard';
 import { TaskList } from './pages/TaskList';
 import { TaskDetail } from './pages/TaskDetail';
@@ -9,7 +9,10 @@ import { Templates } from './pages/Templates';
 import { Settings } from './pages/Settings';
 import { Logs } from './pages/Logs';
 import { Login } from './pages/Login';
+import { AiButler } from './pages/AiButler';
+import { EmailHub } from './pages/EmailHub';
 import './index.css';
+
 
 /**
  * CF-Reminder 管理后台应用入口
@@ -31,11 +34,11 @@ function App() {
   useEffect(() => {
     const checkAuth = () => {
       const apiUrl = localStorage.getItem('api_url');
-      const apiKey = localStorage.getItem('api_key');
-      const demoMode = localStorage.getItem('demo_mode');
+      const apiKey = localStorage.getItem('api_key'); // 兼容旧版
+      const authToken = localStorage.getItem('auth_token');
 
-      // 有 API 配置或演示模式则视为已登录
-      if ((apiUrl && apiKey) || demoMode === 'true') {
+      // 必须有 Token 或旧版 Key 且有 API URL 才视为已登录
+      if (apiUrl && (authToken || apiKey)) {
         setIsLoggedIn(true);
       }
       setIsLoading(false);
@@ -43,6 +46,9 @@ function App() {
 
     checkAuth();
   }, []);
+
+  const location = useLocation();
+  const from = location.state?.from?.pathname || '/';
 
   // 登录成功回调
   const handleLogin = () => {
@@ -53,7 +59,6 @@ function App() {
   const handleLogout = () => {
     localStorage.removeItem('api_url');
     localStorage.removeItem('api_key');
-    localStorage.removeItem('demo_mode');
     setIsLoggedIn(false);
   };
 
@@ -75,36 +80,52 @@ function App() {
     );
   }
 
-  // 未登录时显示登录页
-  if (!isLoggedIn) {
-    return <Login onLogin={handleLogin} />;
-  }
 
+  // 即使未登录，也渲染 Router，但通过守卫控制访问
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<Layout onLogout={handleLogout} />}>
-          {/* 仪表盘 - 首页 */}
-          <Route index element={<Dashboard />} />
+    <Routes>
+      {/* 登录页 */}
+      <Route
+        path="/login"
+        element={
+          isLoggedIn ? <Navigate to={from} replace /> : <Login onLogin={handleLogin} />
+        }
+      />
 
-          {/* 任务管理 */}
-          <Route path="tasks" element={<TaskList />} />
-          <Route path="tasks/:id" element={<TaskDetail />} />
-          <Route path="tasks/:id/edit" element={<CreateTask />} />
-          <Route path="create" element={<CreateTask />} />
+      {/* 受保护的路由区域 */}
+      <Route element={
+        <AuthGuard isLoggedIn={isLoggedIn}>
+          <Layout onLogout={handleLogout} />
+        </AuthGuard>
+      }>
 
-          {/* 内容管理 */}
-          <Route path="templates" element={<Templates />} />
-          <Route path="logs" element={<Logs />} />
+        {/* 仪表盘 - 首页 */}
+        <Route index element={<Dashboard />} />
 
-          {/* 系统设置 */}
-          <Route path="settings" element={<Settings />} />
+        {/* 智能管家 */}
+        <Route path="butler" element={<AiButler />} />
 
-          {/* 404 重定向到首页 */}
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Route>
-      </Routes>
-    </BrowserRouter>
+
+        {/* 任务管理 */}
+        <Route path="tasks" element={<TaskList />} />
+        <Route path="tasks/:id" element={<TaskDetail />} />
+        <Route path="tasks/:id/edit" element={<CreateTask />} />
+        <Route path="create" element={<CreateTask />} />
+
+        {/* 邮箱中心 */}
+        <Route path="email" element={<EmailHub />} />
+
+        {/* 内容管理 */}
+        <Route path="templates" element={<Templates />} />
+        <Route path="logs" element={<Logs />} />
+
+        {/* 系统设置 */}
+        <Route path="settings" element={<Settings />} />
+      </Route>
+
+      {/* 404/其他 重定向 - 如果未登录会先被守卫拦截，如果已登录则去首页 */}
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
   );
 }
 

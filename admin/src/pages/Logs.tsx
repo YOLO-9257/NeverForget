@@ -10,17 +10,18 @@ import { zhCN } from 'date-fns/locale';
  * 展示所有任务的执行记录
  */
 export function Logs() {
-    const [logs, setLogs] = useState<(TriggerLog & { reminder_title?: string })[]>([]);
+    const [logs, setLogs] = useState<(TriggerLog & { reminder_title?: string; reminder_type?: string })[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [total, setTotal] = useState(0);
     const [page, setPage] = useState(1);
     const [statusFilter, setStatusFilter] = useState<string>('');
+    const [typeFilter, setTypeFilter] = useState<string>('');
     const pageSize = 20;
 
     useEffect(() => {
         loadLogs();
-    }, [page, statusFilter]);
+    }, [page, statusFilter, typeFilter]);
 
     const loadLogs = async () => {
         try {
@@ -30,6 +31,7 @@ export function Logs() {
                 limit: pageSize,
                 offset: (page - 1) * pageSize,
                 status: statusFilter || undefined,
+                type: typeFilter || undefined,
             });
             if (res.data) {
                 setLogs(res.data.items || []);
@@ -53,6 +55,19 @@ export function Logs() {
                     <p className="page-subtitle">查看所有任务的执行记录</p>
                 </div>
                 <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                    <select
+                        className="form-select"
+                        value={typeFilter}
+                        onChange={(e) => {
+                            setTypeFilter(e.target.value);
+                            setPage(1);
+                        }}
+                        style={{ width: '150px' }}
+                    >
+                        <option value="">全部类型</option>
+                        <option value="reminder">定时任务</option>
+                        <option value="email">邮件任务</option>
+                    </select>
                     <select
                         className="form-select"
                         value={statusFilter}
@@ -103,6 +118,7 @@ export function Logs() {
                                     <tr>
                                         <th>执行时间</th>
                                         <th>任务名称</th>
+                                        <th>类型</th>
                                         <th>状态</th>
                                         <th>耗时</th>
                                         <th>详情</th>
@@ -122,6 +138,11 @@ export function Logs() {
                                                 >
                                                     {log.reminder_title || log.reminder_id}
                                                 </Link>
+                                            </td>
+                                            <td>
+                                                <span className={`badge ${log.reminder_type === 'email_sync' || log.type === 'email' ? 'badge-info' : ''}`}>
+                                                    {log.reminder_type === 'email_sync' || log.type === 'email' ? '📧 邮件' : '⏰ 定时'}
+                                                </span>
                                             </td>
                                             <td>
                                                 <span className={`badge ${log.status === 'success' ? 'badge-success' : 'badge-error'}`}>

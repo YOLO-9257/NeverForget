@@ -1,6 +1,6 @@
-# NeverForget 部署指南
+# CF-Reminder 部署指南
 
-> 本文档详细说明如何将 NeverForget 项目部署到 Cloudflare 的 **Workers**（后端 API）和 **Pages**（前端管理后台）。
+> 本文档详细说明如何将 CF-Reminder 项目部署到 Cloudflare 的 **Workers**（后端 API）和 **Pages**（前端管理后台）。
 
 ## 📋 目录
 
@@ -86,7 +86,7 @@ npm -v
 ### 步骤 1.1：进入项目目录
 
 ```bash
-cd never-forget
+cd cf-reminder
 ```
 
 ### 步骤 1.2：安装依赖
@@ -128,7 +128,7 @@ database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"  # <-- 记录这个 ID
 编辑 `wrangler.toml` 文件，将 `database_id` 替换为您刚才获得的 ID：
 
 ```toml
-name = "never-forget"
+name = "cf-reminder"
 main = "src/index.ts"
 compatibility_date = "2024-01-17"
 
@@ -144,7 +144,7 @@ database_id = "您的数据库ID"  # <-- 替换这里
 
 # 环境变量
 [vars]
-WORKER_BASE_URL = "https://never-forget.您的域名.workers.dev"
+WORKER_BASE_URL = "https://cf-reminder.您的域名.workers.dev"
 PUSH_SERVICE_URL = "https://您的go-wxpush服务地址"
 TIMEZONE = "Asia/Shanghai"
 
@@ -157,9 +157,9 @@ local_protocol = "http"
 
 | 配置项 | 说明 | 示例 |
 |--------|------|------|
-| `database_id` | D1 数据库的唯一标识符 | `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` |
-| `PUSH_SERVICE_URL` | go-wxpush 服务地址（**必须 HTTPS**） | `https://push.your-domain.com` |
-| `WORKER_BASE_URL` | Worker 自身的 URL（用于生成链接） | `https://never-forget.xxx.workers.dev` |
+| `database_id` | D1 数据库的唯一标识符 | `9ad6af77-0296-4e6c-b872-dd1a6d060b14` |
+| `PUSH_SERVICE_URL` | go-wxpush 服务地址（**必须 HTTPS**） | `https://push.yolo.ccwu.cc` |
+| `WORKER_BASE_URL` | Worker 自身的 URL（用于生成链接） | `https://cf-reminder.xxx.workers.dev` |
 
 ### 步骤 1.6：初始化数据库表结构
 
@@ -200,13 +200,13 @@ npx wrangler deploy
 **部署成功后的输出**：
 
 ```
-Uploaded never-forget (1.23 sec)
-Deployed never-forget triggers (0.25 sec)
-  https://never-forget.您的账户.workers.dev
+Uploaded cf-reminder (1.23 sec)
+Deployed cf-reminder triggers (0.25 sec)
+  https://cf-reminder.您的账户.workers.dev
 Current Version ID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 ```
 
-> 📝 **重要**：请记录这个 URL（例如 `https://never-forget.xxx.workers.dev`），下一步部署前端时需要使用。
+> 📝 **重要**：请记录这个 URL（例如 `https://cf-reminder.xxx.workers.dev`），下一步部署前端时需要使用。
 
 ---
 
@@ -243,7 +243,7 @@ echo VITE_API_URL=https://cf-reminder.您的账户.workers.dev > .env
 
 ```env
 # API 地址（必填）
-VITE_API_URL=https://never-forget.您的账户.workers.dev
+VITE_API_URL=https://cf-reminder.您的账户.workers.dev
 
 # API 密钥（可选，也可在管理后台的设置页面配置）
 # VITE_API_KEY=your-api-key
@@ -304,11 +304,11 @@ Take a look at your site: https://reminder-admin.pages.dev
 
 ```bash
 # 测试健康检查端点
-curl https://never-forget.您的账户.workers.dev/api/health
+curl https://cf-reminder.您的账户.workers.dev/api/health
 
 # 测试认证（需要 API Key）
 curl -H "Authorization: Bearer your-api-key" \
-     https://never-forget.您的账户.workers.dev/api/reminders
+     https://cf-reminder.您的账户.workers.dev/api/reminders
 ```
 
 **预期响应**：
@@ -374,7 +374,7 @@ npx wrangler d1 list
 
 **后端更新**：
 ```bash
-cd never-forget
+cd cf-reminder
 npm run deploy
 ```
 
@@ -392,7 +392,7 @@ npx wrangler pages deploy dist --project-name=reminder-admin
 npx wrangler tail
 
 # 或在 Cloudflare Dashboard 查看
-# Workers & Pages > never-forget > Logs
+# Workers & Pages > cf-reminder > Logs
 ```
 
 ---

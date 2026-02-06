@@ -13,6 +13,63 @@ import {
 } from 'recharts';
 import { statsApi, reminderApi } from '../api';
 import type { Stats, Reminder } from '../types';
+import { generateContent, getAiProfiles } from '../utils/ai';
+
+// AI 分析卡片组件
+function AiAnalysisCard({ stats }: { stats: Stats | null }) {
+    const [analysis, setAnalysis] = useState<string | null>(null);
+    const [analyzing, setAnalyzing] = useState(false);
+    const [profiles] = useState(() => getAiProfiles());
+
+    if (!stats || profiles.length === 0) return null;
+
+    const handleAnalyze = async () => {
+        setAnalyzing(true);
+        try {
+            const prompt = `你是 NeverForget 系统的数据分析师。请分析以下任务执行数据，给出 3 条简短的洞察或建议（中文）：
+总任务: ${stats.total_reminders}, 运行中: ${stats.active_reminders}, 成功率: ${((stats.success_rate || 0) * 100).toFixed(1)}%
+每日执行趋势: ${JSON.stringify(stats.daily_stats?.slice(-7) || [])}
+`;
+            const result = await generateContent(prompt);
+            setAnalysis(result);
+        } catch (e) {
+            console.error(e);
+            setAnalysis('分析失败，请稍后重试。');
+        } finally {
+            setAnalyzing(false);
+        }
+    };
+
+    return (
+        <div className="card" style={{ marginBottom: '24px', background: 'linear-gradient(135deg, var(--bg-card) 0%, rgba(var(--primary-rgb), 0.05) 100%)', border: '1px solid var(--border)' }}>
+            <div className="card-header">
+                <div>
+                    <h3 className="card-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        🧠 AI 智能分析
+                        {analyzing && <span className="spinner-sm" />}
+                    </h3>
+                    <p className="card-subtitle">基于历史数据提供执行建议</p>
+                </div>
+                {!analysis && (
+                    <button className="btn btn-secondary btn-sm" onClick={handleAnalyze} disabled={analyzing}>
+                        ✨ 生成报告
+                    </button>
+                )}
+            </div>
+
+            {analysis && (
+                <div style={{ padding: '0 24px 24px', lineHeight: '1.6', color: 'var(--text-secondary)', whiteSpace: 'pre-wrap' }}>
+                    {analysis}
+                    <div style={{ marginTop: '16px', textAlign: 'right' }}>
+                        <button className="btn btn-ghost btn-xs" onClick={handleAnalyze}>
+                            🔄 重新分析
+                        </button>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
 
 // 图表颜色
 const COLORS = {
@@ -26,6 +83,7 @@ const COLORS = {
 export function Dashboard() {
     const [stats, setStats] = useState<Stats | null>(null);
     const [recentTasks, setRecentTasks] = useState<Reminder[]>([]);
+    const [emailTrend, setEmailTrend] = useState<any[]>([]); // New state
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
@@ -38,13 +96,15 @@ export function Dashboard() {
             setLoading(true);
             setError(null);
 
-            const [statsRes, tasksRes] = await Promise.all([
+            const [statsRes, tasksRes, emailRes] = await Promise.all([
                 statsApi.get(),
                 reminderApi.list({ limit: 5 }),
+                statsApi.getEmailTrend().catch(() => ({ data: [] })) // Tolerantly handle fail
             ]);
 
             if (statsRes.data) setStats(statsRes.data);
             if (tasksRes.data) setRecentTasks(tasksRes.data.items);
+            if (emailRes && emailRes.data) setEmailTrend(emailRes.data);
         } catch (err) {
             setError(err instanceof Error ? err.message : '加载数据失败');
         } finally {
@@ -52,11 +112,12 @@ export function Dashboard() {
         }
     };
 
-    // 执行趋势数据 (需要后端支持每日聚合，暂时基于统计信息估算)
-    // 如果后端增加了 trend API，可以在这里调用
-    const trendData = stats ? [
-        { day: '近7天', success: stats.week_triggers - (stats.failed_triggers || 0), failed: stats.failed_triggers || 0 },
-    ] : [];
+    // 执行趋势数据
+    const trendData = stats?.daily_stats?.map(item => ({
+        day: item.day.slice(5), // 格式化为 MM-DD
+        success: item.success,
+        failed: item.failed,
+    })) || [];
 
     // 任务状态分布
     const statusData = stats
@@ -130,6 +191,9 @@ export function Dashboard() {
                 />
             </div>
 
+            {/* AI 趋势分析 */}
+            <AiAnalysisCard stats={stats} />
+
             {/* 图表区域 */}
             <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '24px', marginBottom: '32px' }}>
                 {/* 执行趋势图 */}
@@ -186,6 +250,7 @@ export function Dashboard() {
                             <p className="card-subtitle">当前任务状态分布</p>
                         </div>
                     </div>
+                    {/* ... Existing Pie Chart ... */}
                     <div className="chart-container">
                         <ResponsiveContainer width="100%" height="100%">
                             <PieChart>
@@ -230,6 +295,52 @@ export function Dashboard() {
                             ))}
                         </div>
                     </div>
+                </div>
+            </div>
+
+            {/* 邮件转发趋势图 (新增) */}
+            <div className="card" style={{ marginBottom: '32px' }}>
+                <div className="card-header">
+                    <div>
+                        <h3 className="card-title">邮件转发活动</h3>
+                        <p className="card-subtitle">近7日邮件获取与转发情况</p>
+                    </div>
+                </div>
+                <div className="chart-container" style={{ height: '300px' }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={emailTrend.map(t => ({ ...t, day: t.day.slice(5) }))}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="hsl(230, 20%, 22%)" />
+                            <XAxis
+                                dataKey="day"
+                                stroke="hsl(230, 15%, 45%)"
+                                fontSize={12}
+                            />
+                            <YAxis stroke="hsl(230, 15%, 45%)" fontSize={12} />
+                            <Tooltip
+                                contentStyle={{
+                                    background: 'hsl(230, 22%, 12%)',
+                                    border: '1px solid hsl(230, 20%, 22%)',
+                                    borderRadius: '8px',
+                                }}
+                            />
+                            <Line
+                                type="monotone"
+                                dataKey="synced"
+                                stroke={COLORS.primary}
+                                strokeWidth={2}
+                                dot={{ fill: COLORS.primary, strokeWidth: 0, r: 4 }}
+                                name="同步次数"
+                            />
+                            <Line
+                                type="monotone"
+                                dataKey="forwarded"
+                                stroke="#FFBB28"
+                                strokeWidth={2}
+                                dot={{ fill: "#FFBB28", strokeWidth: 0, r: 4 }}
+                                name="转发数"
+                            />
+                        </LineChart>
+                    </ResponsiveContainer>
                 </div>
             </div>
 
@@ -281,7 +392,7 @@ export function Dashboard() {
                     </table>
                 </div>
             </div>
-        </div>
+        </div >
     );
 }
 

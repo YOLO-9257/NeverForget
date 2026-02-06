@@ -2,6 +2,11 @@ import { useState, useEffect } from 'react';
 import { useNavigate, Link, useParams } from 'react-router-dom';
 import { reminderApi } from '../api';
 import type { CreateReminderRequest } from '../types';
+import type { NlpParseResult } from '../utils/nlpParser';
+import { NlpInput } from '../components/NlpInput';
+import { generateContent, getAiProfiles } from '../utils/ai';
+import { ConfigManagerModal } from '../components/ConfigManagerModal';
+import { configApi, type SavedConfig } from '../api';
 
 // go-wxpush 模板类型
 interface WxPushTemplate {
@@ -38,6 +43,39 @@ export function CreateTask() {
     const [loadingTemplates, setLoadingTemplates] = useState(false);
     const [inputMode, setInputMode] = useState<'select' | 'input'>('select');
     const [userTemplates, setUserTemplates] = useState<UserMessageTemplate[]>([]);
+    const [showNlpInput, setShowNlpInput] = useState(false);
+
+    // 保存的配置
+    const [savedUserIds, setSavedUserIds] = useState<SavedConfig[]>([]);
+    const [savedTemplateIds, setSavedTemplateIds] = useState<SavedConfig[]>([]);
+    const [savedPushConfigs, setSavedPushConfigs] = useState<SavedConfig[]>([]);
+    const [manageModal, setManageModal] = useState<{ open: boolean; category: string; title: string }>({ open: false, category: '', title: '' });
+
+    // 加载保存的配置
+    useEffect(() => {
+        if (step === 3) {
+            loadSavedConfigs('wxpush_userid');
+            loadSavedConfigs('wxpush_templateid');
+            loadSavedConfigs('push_config');
+        }
+    }, [step]);
+
+    const loadSavedConfigs = async (category: string) => {
+        try {
+            const res = await configApi.list(category);
+            if (res.data) {
+                if (category === 'wxpush_userid') setSavedUserIds(res.data);
+                if (category === 'wxpush_templateid') setSavedTemplateIds(res.data);
+                if (category === 'push_config') setSavedPushConfigs(res.data);
+            }
+        } catch (e) {
+            console.error('加载配置失败', e);
+        }
+    };
+
+    // AI 状态
+    const [polishing, setPolishing] = useState(false);
+    const hasAi = getAiProfiles().length > 0;
 
     // 表单数据
     const [formData, setFormData] = useState({
@@ -257,6 +295,22 @@ export function CreateTask() {
         setStep(2);
     };
 
+    // 处理 NLP 解析结果
+    const handleNlpApply = (result: NlpParseResult) => {
+        setFormData((prev) => ({
+            ...prev,
+            title: result.title || prev.title,
+            content: result.content || result.title || prev.content,
+            schedule_type: result.schedule_type || prev.schedule_type,
+            schedule_time: result.schedule_time || prev.schedule_time,
+            schedule_date: result.schedule_date || prev.schedule_date,
+            schedule_weekday: result.schedule_weekday ?? prev.schedule_weekday,
+            schedule_day: result.schedule_day ?? prev.schedule_day,
+        }));
+        setShowNlpInput(false);
+        setStep(2);
+    };
+
     // 更新表单数据
     const updateFormData = (field: string, value: string | number | boolean) => {
         setFormData((prev) => ({ ...prev, [field]: value }));
@@ -332,6 +386,44 @@ export function CreateTask() {
         }
     };
 
+    // AI 润色内容
+    const handlePolish = async () => {
+        if ((!formData.title && !formData.content) || polishing) return;
+
+        setPolishing(true);
+        try {
+            const prompt = `你是一个专业的私人助理。请润色以下任务提醒信息，使其更清晰、专业或温馨（取决于原始内容的风格）。保持原意不变。
+标题: ${formData.title || '(无)'}
+内容: ${formData.content || '(无)'}
+
+请务必只返回一个纯 JSON 对象，不要包含 markdown 格式或其他文字：
+{
+  "title": "润色后的标题",
+  "content": "润色后的内容"
+}`;
+            const resultStr = await generateContent(prompt);
+
+            // 尝试提取 JSON
+            let jsonStr = resultStr;
+            const match = resultStr.match(/\{[\s\S]*\}/);
+            if (match) {
+                jsonStr = match[0];
+            }
+
+            const json = JSON.parse(jsonStr);
+            setFormData(prev => ({
+                ...prev,
+                title: json.title || prev.title,
+                content: json.content || prev.content
+            }));
+        } catch (e) {
+            console.error('Polish failed', e);
+            setError('AI 润色失败，请重试');
+        } finally {
+            setPolishing(false);
+        }
+    };
+
     return (
         <div>
             {/* 页面标题 */}
@@ -383,27 +475,91 @@ export function CreateTask() {
             {/* 步骤 1：选择模板 */}
             {step === 1 && (
                 <>
-                    <div className="template-grid">
-                        {templates.map((template) => (
-                            <div
-                                key={template.id}
-                                className="template-card"
-                                style={{ '--template-color': template.color } as React.CSSProperties}
-                                onClick={() => handleSelectTemplate(template)}
-                            >
-                                <div className="template-icon">{template.icon}</div>
-                                <div className="template-name">{template.name}</div>
-                                <div className="template-desc">
-                                    {template.id === 'custom'
-                                        ? '从头开始创建自定义提醒任务'
-                                        : `预设：${getScheduleTypeLabel(template.schedule_type)} ${template.schedule_time}`}
-                                </div>
+                    {/* 智能输入入口 */}
+                    {!showNlpInput ? (
+                        <div
+                            className="nlp-entry-card"
+                            onClick={() => setShowNlpInput(true)}
+                            style={{
+                                background: 'linear-gradient(135deg, hsl(245 50% 25%) 0%, hsl(280 50% 20%) 100%)',
+                                border: '2px dashed hsl(245 50% 40%)',
+                                borderRadius: '16px',
+                                padding: '24px',
+                                marginBottom: '24px',
+                                cursor: 'pointer',
+                                transition: 'all 0.3s ease',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '16px',
+                            }}
+                            onMouseOver={(e) => {
+                                e.currentTarget.style.borderColor = 'var(--primary)';
+                                e.currentTarget.style.transform = 'translateY(-2px)';
+                            }}
+                            onMouseOut={(e) => {
+                                e.currentTarget.style.borderColor = 'hsl(245 50% 40%)';
+                                e.currentTarget.style.transform = 'translateY(0)';
+                            }}
+                        >
+                            <div style={{ fontSize: '40px' }}>🧠</div>
+                            <div style={{ flex: 1 }}>
+                                <h3 style={{ margin: 0, fontSize: '18px', color: 'var(--text)', marginBottom: '4px' }}>
+                                    ✨ 智能输入
+                                </h3>
+                                <p style={{ margin: 0, fontSize: '14px', color: 'var(--text-muted)' }}>
+                                    用自然语言描述，如 "明天下午3点提醒我开会" 或 "every Friday at 5pm"
+                                </p>
                             </div>
-                        ))}
-                    </div>
+                            <div style={{ fontSize: '24px', color: 'var(--primary)' }}>→</div>
+                        </div>
+                    ) : (
+                        <div style={{ marginBottom: '24px' }}>
+                            <NlpInput
+                                onApply={handleNlpApply}
+                                onClose={() => setShowNlpInput(false)}
+                            />
+                        </div>
+                    )}
+
+                    {/* 分割线 */}
+                    {!showNlpInput && (
+                        <div style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '16px',
+                            marginBottom: '24px',
+                            color: 'var(--text-muted)',
+                            fontSize: '14px',
+                        }}>
+                            <div style={{ flex: 1, height: '1px', background: 'var(--border)' }} />
+                            <span>或选择模板</span>
+                            <div style={{ flex: 1, height: '1px', background: 'var(--border)' }} />
+                        </div>
+                    )}
+
+                    {!showNlpInput && (
+                        <div className="template-grid">
+                            {templates.map((template) => (
+                                <div
+                                    key={template.id}
+                                    className="template-card"
+                                    style={{ '--template-color': template.color } as React.CSSProperties}
+                                    onClick={() => handleSelectTemplate(template)}
+                                >
+                                    <div className="template-icon">{template.icon}</div>
+                                    <div className="template-name">{template.name}</div>
+                                    <div className="template-desc">
+                                        {template.id === 'custom'
+                                            ? '从头开始创建自定义提醒任务'
+                                            : `预设：${getScheduleTypeLabel(template.schedule_type)} ${template.schedule_time}`}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
 
                     {/* 用户自定义模板（来自"消息模板"页面） */}
-                    {userTemplates.length > 0 && (
+                    {!showNlpInput && userTemplates.length > 0 && (
                         <>
                             <h3 style={{ marginTop: '32px', marginBottom: '16px', color: 'var(--text-muted)', fontSize: '14px', fontWeight: 500 }}>
                                 📝 我的模板（来自消息模板页面）
@@ -458,7 +614,21 @@ export function CreateTask() {
                                 />
                             </div>
                             <div className="form-group">
-                                <label className="form-label">提醒内容 *</label>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                                    <label className="form-label" style={{ marginBottom: 0 }}>提醒内容 *</label>
+                                    {hasAi && (
+                                        <button
+                                            className="btn btn-ghost btn-xs"
+                                            onClick={handlePolish}
+                                            disabled={polishing || (!formData.title && !formData.content)}
+                                            title="使用 AI 优化标题和内容"
+                                            style={{ color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                        >
+                                            {polishing ? <span className="spinner-sm" style={{ width: '12px', height: '12px' }} /> : '✨'}
+                                            AI 润色
+                                        </button>
+                                    )}
+                                </div>
                                 <textarea
                                     className="form-textarea"
                                     placeholder="输入要推送的消息内容..."
@@ -638,7 +808,44 @@ export function CreateTask() {
                 step === 3 && (
                     <div className="card">
                         <div className="form-section">
-                            <h3 className="form-section-title">📱 微信推送配置</h3>
+                            <div className="form-section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                                <h3 className="form-section-title" style={{ marginBottom: 0 }}>📱 微信推送配置</h3>
+                                <div style={{ display: 'flex', gap: '8px' }}>
+                                    <button
+                                        className="btn btn-ghost btn-xs"
+                                        onClick={() => setManageModal({ open: true, category: 'push_config', title: '常用推送配置' })}
+                                    >
+                                        ⚙️ 管理库
+                                    </button>
+                                    {savedPushConfigs.length > 0 && (
+                                        <select
+                                            className="form-select"
+                                            style={{ width: '150px', fontSize: '12px', padding: '4px 8px' }}
+                                            onChange={(e) => {
+                                                const config = savedPushConfigs.find(c => c.id.toString() === e.target.value);
+                                                if (config) {
+                                                    try {
+                                                        const val = JSON.parse(config.value);
+                                                        setFormData(prev => ({
+                                                            ...prev,
+                                                            appid: val.appid || prev.appid,
+                                                            secret: val.secret || prev.secret,
+                                                            userid: val.userid || prev.userid,
+                                                            template_id: val.template_id || prev.template_id,
+                                                        }));
+                                                    } catch (e) { console.error('解析配置失败', e); }
+                                                }
+                                            }}
+                                            value=""
+                                        >
+                                            <option value="">快速从库填充...</option>
+                                            {savedPushConfigs.map(c => (
+                                                <option key={c.id} value={c.id}>{c.name}</option>
+                                            ))}
+                                        </select>
+                                    )}
+                                </div>
+                            </div>
                             <p className="form-section-desc">
                                 配置 go-wxpush 服务所需的微信公众号信息。如果您还没有配置，请先完成微信公众号的开发者配置。
                             </p>
@@ -668,24 +875,86 @@ export function CreateTask() {
 
                             <div className="form-row">
                                 <div className="form-group">
-                                    <label className="form-label">用户 OpenID *</label>
-                                    <input
-                                        type="text"
-                                        className="form-input"
-                                        placeholder="接收消息的用户 OpenID"
-                                        value={formData.userid}
-                                        onChange={(e) => updateFormData('userid', e.target.value)}
-                                    />
+                                    <label className="form-label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <span>用户 OpenID *</span>
+                                        <button
+                                            className="btn btn-ghost btn-xs"
+                                            onClick={() => setManageModal({ open: true, category: 'wxpush_userid', title: '常用用户ID' })}
+                                        >
+                                            ⚙️ 管理
+                                        </button>
+                                    </label>
+                                    <div style={{ display: 'flex', gap: '8px' }}>
+                                        <input
+                                            type="text"
+                                            className="form-input"
+                                            placeholder="接收消息的用户 OpenID"
+                                            value={formData.userid}
+                                            onChange={(e) => updateFormData('userid', e.target.value)}
+                                            list="saved-userids"
+                                        />
+                                        <datalist id="saved-userids">
+                                            {savedUserIds.map(c => (
+                                                <option key={c.id} value={c.value}>{c.name}</option>
+                                            ))}
+                                        </datalist>
+                                        {savedUserIds.length > 0 && (
+                                            <select
+                                                className="form-select"
+                                                style={{ width: '120px' }}
+                                                onChange={(e) => {
+                                                    if (e.target.value) updateFormData('userid', e.target.value);
+                                                }}
+                                                value=""
+                                            >
+                                                <option value="">快速选择</option>
+                                                {savedUserIds.map(c => (
+                                                    <option key={c.id} value={c.value}>{c.name}</option>
+                                                ))}
+                                            </select>
+                                        )}
+                                    </div>
                                 </div>
                                 <div className="form-group">
-                                    <label className="form-label">模板 ID *</label>
-                                    <input
-                                        type="text"
-                                        className="form-input"
-                                        placeholder="微信消息模板 ID"
-                                        value={formData.template_id}
-                                        onChange={(e) => updateFormData('template_id', e.target.value)}
-                                    />
+                                    <label className="form-label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <span>模板 ID *</span>
+                                        <button
+                                            className="btn btn-ghost btn-xs"
+                                            onClick={() => setManageModal({ open: true, category: 'wxpush_templateid', title: '常用模板ID' })}
+                                        >
+                                            ⚙️ 管理
+                                        </button>
+                                    </label>
+                                    <div style={{ display: 'flex', gap: '8px' }}>
+                                        <input
+                                            type="text"
+                                            className="form-input"
+                                            placeholder="微信消息模板 ID"
+                                            value={formData.template_id}
+                                            onChange={(e) => updateFormData('template_id', e.target.value)}
+                                            list="saved-templateids"
+                                        />
+                                        <datalist id="saved-templateids">
+                                            {savedTemplateIds.map(c => (
+                                                <option key={c.id} value={c.value}>{c.name}</option>
+                                            ))}
+                                        </datalist>
+                                        {savedTemplateIds.length > 0 && (
+                                            <select
+                                                className="form-select"
+                                                style={{ width: '120px' }}
+                                                onChange={(e) => {
+                                                    if (e.target.value) updateFormData('template_id', e.target.value);
+                                                }}
+                                                value=""
+                                            >
+                                                <option value="">快速选择</option>
+                                                {savedTemplateIds.map(c => (
+                                                    <option key={c.id} value={c.value}>{c.name}</option>
+                                                ))}
+                                            </select>
+                                        )}
+                                    </div>
                                 </div>
                             </div>
 
@@ -816,7 +1085,35 @@ export function CreateTask() {
                     </div>
                 )
             }
-        </div >
+            {/* 配置管理弹窗 */}
+            {manageModal.open && (
+                <ConfigManagerModal
+                    isOpen={manageModal.open}
+                    onClose={() => {
+                        setManageModal(prev => ({ ...prev, open: false }));
+                        loadSavedConfigs(manageModal.category);
+                    }}
+                    category={manageModal.category}
+                    title={manageModal.title}
+                    onSelect={(value) => {
+                        if (manageModal.category === 'wxpush_userid') updateFormData('userid', value);
+                        if (manageModal.category === 'wxpush_templateid') updateFormData('template_id', value);
+                        if (manageModal.category === 'push_config') {
+                            try {
+                                const val = JSON.parse(value);
+                                setFormData(prev => ({
+                                    ...prev,
+                                    appid: val.appid || prev.appid,
+                                    secret: val.secret || prev.secret,
+                                    userid: val.userid || prev.userid,
+                                    template_id: val.template_id || prev.template_id,
+                                }));
+                            } catch (e) { console.error('解析失败', e); }
+                        }
+                    }}
+                />
+            )}
+        </div>
     );
 }
 

@@ -4,6 +4,8 @@ export interface Reminder {
     user_key: string;
     title: string;
     content: string;
+    type?: 'reminder' | 'email_sync';
+    related_id?: string;
     schedule_type: 'once' | 'daily' | 'weekly' | 'monthly' | 'cron';
     schedule_time: string | null;
     schedule_cron: string | null;
@@ -40,6 +42,7 @@ export interface TriggerLog {
     response: string | null;
     error: string | null;
     duration_ms: number | null;
+    type?: 'reminder' | 'email';
 }
 
 // 统计数据类型
@@ -54,6 +57,17 @@ export interface Stats {
     success_rate: number;
     today_triggers: number;
     week_triggers: number;
+    daily_stats: {
+        day: string;
+        success: number;
+        failed: number;
+    }[];
+}
+
+export interface EmailTrendStats {
+    day: string;
+    forwarded: number;
+    synced: number;
 }
 
 // API 响应类型
@@ -97,4 +111,18 @@ export interface CreateReminderRequest {
     template_name?: string | null;  // go-wxpush 模板名称（null 表示使用默认）
     ack_required?: boolean;
     retry_interval?: number;  // 强提醒重试间隔（分钟）
+}
+
+export interface FetchedEmail {
+    id: number;
+    account_id: string;
+    uid: number;
+    from_address: string;
+    subject: string;
+    content: string; // May be omitted in list view
+    received_at: number;
+    fetched_at: number;
+    is_pushed: number;
+    push_status: 'pending' | 'success' | 'failed' | 'skipped' | 'filtered';
+    push_log: string | null;
 }

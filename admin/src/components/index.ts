@@ -1,1 +1,2 @@
-export { Layout } from './Layout';
+export * from './Layout';
+export * from './AuthGuard';

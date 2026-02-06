@@ -49,10 +49,10 @@ export async function createReminder(
         schedule_type, schedule_time, schedule_cron, schedule_date, 
         schedule_weekday, schedule_day, timezone,
         push_config, push_url, template_name,
-        status, next_trigger_at, trigger_count,
+        status, type, next_trigger_at, trigger_count,
         ack_required, ack_status, retry_interval,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, 0, ?, 'none', ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, 0, ?, 'none', ?, ?, ?)
     `).bind(
             id,
             userKey,
@@ -65,10 +65,12 @@ export async function createReminder(
             body.schedule_weekday ?? null,
             body.schedule_day ?? null,
             body.timezone || env.TIMEZONE,
-            JSON.stringify(body.push_config),
+            JSON.stringify(body.push_config || {}),
             body.push_url || null,
             body.template_name || null,
+            body.type || 'reminder',
             nextTrigger,
+            0,
             body.ack_required ? 1 : 0,
             body.retry_interval ?? 30,  // 默认 30 分钟
             now,
@@ -97,6 +99,7 @@ export async function listReminders(
     try {
         const url = new URL(request.url);
         const status = url.searchParams.get('status'); // 可选：按状态筛选
+        const type = url.searchParams.get('type'); // 可选：按类型筛选 (reminder | email_sync)
         const limit = Math.min(parseInt(url.searchParams.get('limit') || '50'), 100);
         const offset = parseInt(url.searchParams.get('offset') || '0');
 
@@ -106,6 +109,11 @@ export async function listReminders(
         if (status) {
             query += ` AND status = ?`;
             params.push(status);
+        }
+
+        if (type) {
+            query += ` AND type = ?`;
+            params.push(type);
         }
 
         query += ` ORDER BY created_at DESC LIMIT ? OFFSET ?`;
@@ -119,6 +127,10 @@ export async function listReminders(
         if (status) {
             countQuery += ` AND status = ?`;
             countParams.push(status);
+        }
+        if (type) {
+            countQuery += ` AND type = ?`;
+            countParams.push(type);
         }
         const countResult = await env.DB.prepare(countQuery).bind(...countParams).first<{ total: number }>();
 
@@ -377,13 +389,20 @@ export async function getReminderLogs(
 
         const url = new URL(request.url);
         const limit = Math.min(parseInt(url.searchParams.get('limit') || '20'), 100);
+        const type = url.searchParams.get('type'); // 可选：按类型筛选 (reminder | email)
 
-        const result = await env.DB.prepare(`
-      SELECT * FROM trigger_logs 
-      WHERE reminder_id = ? 
-      ORDER BY triggered_at DESC 
-      LIMIT ?
-    `).bind(id, limit).all();
+        let query = `SELECT * FROM trigger_logs WHERE reminder_id = ?`;
+        const params: any[] = [id];
+
+        if (type) {
+            query += ` AND type = ?`;
+            params.push(type);
+        }
+
+        query += ` ORDER BY triggered_at DESC LIMIT ?`;
+        params.push(limit);
+
+        const result = await env.DB.prepare(query).bind(...params).all();
 
         const logs = (result.results || []).map((log: any) => ({
             ...log,
@@ -466,21 +485,23 @@ function validateCreateRequest(body: CreateReminderRequest): string | null {
             break;
     }
 
-    // 验证推送配置
-    if (!body.push_config) {
-        return '推送配置 (push_config) 不能为空';
-    }
-    if (!body.push_config.appid) {
-        return 'push_config.appid 不能为空';
-    }
-    if (!body.push_config.secret) {
-        return 'push_config.secret 不能为空';
-    }
-    if (!body.push_config.userid) {
-        return 'push_config.userid 不能为空';
-    }
-    if (!body.push_config.template_id) {
-        return 'push_config.template_id 不能为空';
+    // 验证推送配置 (普通任务必须有推送配置，邮箱同步等特殊任务可选)
+    if (body.type !== 'email_sync') {
+        if (!body.push_config) {
+            return '推送配置 (push_config) 不能为空';
+        }
+        if (!body.push_config.appid) {
+            return 'push_config.appid 不能为空';
+        }
+        if (!body.push_config.secret) {
+            return 'push_config.secret 不能为空';
+        }
+        if (!body.push_config.userid) {
+            return 'push_config.userid 不能为空';
+        }
+        if (!body.push_config.template_id) {
+            return 'push_config.template_id 不能为空';
+        }
     }
 
     return null;

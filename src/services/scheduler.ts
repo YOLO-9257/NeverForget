@@ -2,9 +2,10 @@
  * 调度服务 - 处理定时任务的触发和执行
  */
 
-import { Env, Reminder, PushConfig } from '../types';
+import { Env, Reminder, PushConfig, EmailAccount } from '../types';
 import { sendPush } from './pusher';
 import { calculateNextTrigger } from '../utils/time';
+import { runImapPolling, syncEmailAccount } from './imapPoller';
 
 /**
  * 处理定时触发
@@ -16,8 +17,87 @@ export async function handleScheduledTrigger(env: Env): Promise<void> {
     console.log(`[Scheduler] 开始执行定时任务检查, 当前时间: ${new Date(now).toISOString()}`);
 
     try {
-        // 查询所有到期且状态为 active 的任务
-        const result = await env.DB.prepare(`
+        // 执行到期的提醒任务（包括普通提醒和邮箱同步任务）
+        await executeScheduledReminders(env, now);
+
+        console.log(`[Scheduler] 所有任务执行完成`);
+    } catch (error) {
+        console.error(`[Scheduler] 执行出错:`, error);
+    }
+}
+
+/**
+ * 执行邮箱同步任务
+ * 针对 type='email_sync' 的任务，调用对应账户的 IMAP 同步
+ */
+async function executeEmailSyncTask(
+    reminder: Reminder,
+    env: Env,
+    triggeredAt: number
+): Promise<void> {
+    const accountId = reminder.related_id;
+    if (!accountId) {
+        console.error(`[Scheduler] 邮箱同步任务 ${reminder.id} 缺少 related_id`);
+        return;
+    }
+
+    console.log(`[Scheduler] 执行邮箱同步任务: ${reminder.id} -> 账户 ${accountId}`);
+
+    try {
+        // 调用邮箱同步服务
+        const result = await syncEmailAccount(env, accountId);
+
+        // 记录执行日志到 trigger_logs
+        await env.DB.prepare(`
+            INSERT INTO trigger_logs (reminder_id, triggered_at, status, response, error, duration_ms)
+            VALUES (?, ?, ?, ?, ?, ?)
+        `).bind(
+            reminder.id,
+            triggeredAt,
+            result.success ? 'success' : 'failed',
+            result.emailsForwarded > 0 ? `同步 ${result.emailsFound} 封, 转发 ${result.emailsForwarded} 封` : null,
+            result.error || null,
+            result.duration || 0
+        ).run();
+
+        // 更新下次触发时间
+        const nextTrigger = calculateNextTrigger(
+            reminder.schedule_type,
+            reminder.schedule_time,
+            reminder.schedule_date,
+            reminder.schedule_weekday,
+            reminder.schedule_day,
+            reminder.timezone,
+            new Date(triggeredAt)
+        );
+
+        if (nextTrigger) {
+            await env.DB.prepare(`
+                UPDATE reminders 
+                SET next_trigger_at = ?, last_trigger_at = ?, trigger_count = trigger_count + 1, updated_at = ?
+                WHERE id = ?
+            `).bind(nextTrigger, triggeredAt, triggeredAt, reminder.id).run();
+        }
+
+    } catch (error) {
+        console.error(`[Scheduler] 邮箱同步任务 ${reminder.id} 执行异常:`, error);
+        await env.DB.prepare(`
+            INSERT INTO trigger_logs (reminder_id, triggered_at, status, error, duration_ms)
+            VALUES (?, ?, 'failed', ?, 0)
+        `).bind(
+            reminder.id,
+            triggeredAt,
+            error instanceof Error ? error.message : '未知错误'
+        ).run();
+    }
+}
+
+/**
+ * 执行到期的提醒任务
+ */
+async function executeScheduledReminders(env: Env, now: number): Promise<void> {
+    // 查询所有到期且状态为 active 的任务
+    const result = await env.DB.prepare(`
       SELECT * FROM reminders 
       WHERE next_trigger_at <= ? 
         AND status = 'active'
@@ -25,25 +105,20 @@ export async function handleScheduledTrigger(env: Env): Promise<void> {
       LIMIT 50
     `).bind(now).all<Reminder>();
 
-        const reminders = result.results || [];
+    const reminders = result.results || [];
 
-        console.log(`[Scheduler] 找到 ${reminders.length} 个待执行任务`);
+    console.log(`[Scheduler] 找到 ${reminders.length} 个待执行任务`);
 
-        if (reminders.length === 0) {
-            return;
-        }
-
-        // 并发执行所有到期任务
-        const executePromises = reminders.map(reminder =>
-            executeReminder(reminder, env, now)
-        );
-
-        await Promise.allSettled(executePromises);
-
-        console.log(`[Scheduler] 所有任务执行完成`);
-    } catch (error) {
-        console.error(`[Scheduler] 执行出错:`, error);
+    if (reminders.length === 0) {
+        return;
     }
+
+    // 并发执行所有到期任务
+    const executePromises = reminders.map(reminder =>
+        executeReminder(reminder, env, now)
+    );
+
+    await Promise.allSettled(executePromises);
 }
 
 /**
@@ -117,13 +192,21 @@ export async function testRunReminder(
 
 /**
  * 执行单个提醒任务
+ * 根据 reminder.type 分发到不同的执行逻辑
  */
 async function executeReminder(
     reminder: Reminder,
     env: Env,
     triggeredAt: number
 ): Promise<void> {
-    console.log(`[Scheduler] 执行任务: ${reminder.id} - ${reminder.title}`);
+    console.log(`[Scheduler] 执行任务: ${reminder.id} - ${reminder.title} (类型: ${reminder.type || 'reminder'})`);
+
+    // 根据任务类型分发到不同的执行逻辑
+    if (reminder.type === 'email_sync') {
+        return executeEmailSyncTask(reminder, env, triggeredAt);
+    }
+
+    // 以下是普通提醒任务的执行逻辑
 
     try {
         // 解析推送配置

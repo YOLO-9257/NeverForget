@@ -219,25 +219,44 @@ export function TaskDetail() {
                             </div>
                         </div>
 
-                        <div className="detail-section">
-                            <h3 className="detail-section-title">推送配置</h3>
-                            <div className="detail-row">
-                                <span className="detail-label">AppID</span>
-                                <span className="detail-value table-mono">{task.push_config?.appid}</span>
+                        {task.type !== 'email_sync' ? (
+                            <div className="detail-section">
+                                <h3 className="detail-section-title">推送配置</h3>
+                                <div className="detail-row">
+                                    <span className="detail-label">AppID</span>
+                                    <span className="detail-value table-mono">{task.push_config?.appid}</span>
+                                </div>
+                                <div className="detail-row">
+                                    <span className="detail-label">UserID</span>
+                                    <span className="detail-value table-mono">{task.push_config?.userid}</span>
+                                </div>
+                                <div className="detail-row">
+                                    <span className="detail-label">Template ID</span>
+                                    <span className="detail-value table-mono">{task.push_config?.template_id}</span>
+                                </div>
+                                <div className="detail-row">
+                                    <span className="detail-label">详情页模板</span>
+                                    <span className="detail-value">{task.template_name || '默认模板'}</span>
+                                </div>
                             </div>
-                            <div className="detail-row">
-                                <span className="detail-label">UserID</span>
-                                <span className="detail-value table-mono">{task.push_config?.userid}</span>
+                        ) : (
+                            <div className="detail-section">
+                                <h3 className="detail-section-title">邮箱同步信息</h3>
+                                <p style={{ fontSize: '14px', color: 'var(--text-muted)' }}>
+                                    这是一个自动邮箱同步任务。它会定期检查您的邮箱并将新邮件推送到微信。
+                                    推送配置使用的是关联邮箱账户中的设置。
+                                </p>
+                                <div className="detail-row">
+                                    <span className="detail-label">关联账户 ID</span>
+                                    <span className="detail-value table-mono">{task.related_id}</span>
+                                </div>
+                                <div style={{ marginTop: '12px' }}>
+                                    <Link to="/email" className="btn btn-ghost btn-sm" style={{ padding: '4px 0' }}>
+                                        ⚙️ 前往邮箱中心管理
+                                    </Link>
+                                </div>
                             </div>
-                            <div className="detail-row">
-                                <span className="detail-label">Template ID</span>
-                                <span className="detail-value table-mono">{task.push_config?.template_id}</span>
-                            </div>
-                            <div className="detail-row">
-                                <span className="detail-label">详情页模板</span>
-                                <span className="detail-value">{task.template_name || '默认模板'}</span>
-                            </div>
-                        </div>
+                        )}
                     </div>
 
                     {/* 右侧：最近执行记录 */}

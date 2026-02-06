@@ -37,7 +37,15 @@ export function Layout({ onLogout }: LayoutProps) {
                             <span className="nav-item-icon">📊</span>
                             <span>仪表盘</span>
                         </NavLink>
+                        <NavLink
+                            to="/butler"
+                            className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+                        >
+                            <span className="nav-item-icon">🤖</span>
+                            <span>智能管家</span>
+                        </NavLink>
                     </div>
+
 
                     <div className="nav-section">
                         <div className="nav-section-title">任务管理</div>
@@ -47,6 +55,13 @@ export function Layout({ onLogout }: LayoutProps) {
                         >
                             <span className="nav-item-icon">📋</span>
                             <span>任务列表</span>
+                        </NavLink>
+                        <NavLink
+                            to="/email"
+                            className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+                        >
+                            <span className="nav-item-icon">📧</span>
+                            <span>邮箱中心</span>
                         </NavLink>
                         <NavLink
                             to="/create"

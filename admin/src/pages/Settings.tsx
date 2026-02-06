@@ -1,12 +1,17 @@
 import { useState, useEffect } from 'react';
 import { testConnection } from '../api';
+import { getAiProfiles, saveAiProfiles, generateContent } from '../utils/ai';
+import type { AiProfile, AiProvider } from '../utils/ai';
+import { ConfigManagerModal } from '../components/ConfigManagerModal';
+import { configApi } from '../api';
+
 
 /**
  * 系统设置页面
- * 管理 API 配置、推送服务设置等
+ * 管理 API 配置、推送服务设置、AI 配置等
  */
 export function Settings() {
-    const [activeTab, setActiveTab] = useState<'api' | 'push' | 'about'>('api');
+    const [activeTab, setActiveTab] = useState<'api' | 'push' | 'ai' | 'about'>('api');
 
     // API 配置
     const [apiUrl, setApiUrl] = useState('');
@@ -28,12 +33,21 @@ export function Settings() {
         enableDesktop: false,
     });
 
+    // AI Profiles 配置
+    const [aiProfiles, setAiProfiles] = useState<AiProfile[]>([]);
+    const [editingProfile, setEditingProfile] = useState<Partial<AiProfile> | null>(null);
+    const [testingLlm, setTestingLlm] = useState(false);
+    const [llmStatus, setLlmStatus] = useState<'idle' | 'success' | 'error'>('idle');
+    const [manageModal, setManageModal] = useState<{ open: boolean; category: string; title: string }>({ open: false, category: '', title: '' });
+
     // 加载保存的设置
     useEffect(() => {
         const savedApiUrl = localStorage.getItem('api_url') || '';
         const savedApiKey = localStorage.getItem('api_key') || '';
         const savedPushConfig = localStorage.getItem('default_push_config');
         const savedNotifications = localStorage.getItem('notification_settings');
+
+        setAiProfiles(getAiProfiles());
 
         setApiUrl(savedApiUrl);
         setApiKey(savedApiKey);
@@ -90,6 +104,133 @@ export function Settings() {
         alert('通知设置已保存');
     };
 
+    // --- AI Profile Management ---
+
+    const handleAddProfile = () => {
+        setEditingProfile({
+            id: crypto.randomUUID(),
+            name: 'New Model',
+            provider: 'gemini',
+            apiKey: '',
+            baseUrl: '',
+            model: '',
+            isDefault: aiProfiles.length === 0 // 第一个自动设为默认
+        });
+        setLlmStatus('idle');
+    };
+
+    const handleEditProfile = (profile: AiProfile) => {
+        setEditingProfile({ ...profile });
+        setLlmStatus('idle');
+    };
+
+    const handleDeleteProfile = (id: string) => {
+        if (!confirm('确定要删除这个模型配置吗？')) return;
+        const newProfiles = aiProfiles.filter(p => p.id !== id);
+        setAiProfiles(newProfiles);
+        saveAiProfiles(newProfiles);
+    };
+
+    const handleSaveProfile = () => {
+        if (!editingProfile || !editingProfile.id || !editingProfile.name || !editingProfile.apiKey) {
+            alert('请填写名称和 API Key');
+            return;
+        }
+
+        const newProfile = editingProfile as AiProfile;
+
+        // 如果设为默认，取消其他默认
+        let updatedProfiles = [...aiProfiles];
+        if (newProfile.isDefault) {
+            updatedProfiles = updatedProfiles.map(p => ({ ...p, isDefault: false }));
+        }
+
+        const existingIndex = updatedProfiles.findIndex(p => p.id === newProfile.id);
+        if (existingIndex >= 0) {
+            updatedProfiles[existingIndex] = newProfile;
+        } else {
+            updatedProfiles.push(newProfile);
+        }
+
+        // 确保至少有一个默认
+        if (updatedProfiles.length > 0 && !updatedProfiles.some(p => p.isDefault)) {
+            updatedProfiles[0].isDefault = true;
+        }
+
+        setAiProfiles(updatedProfiles);
+        saveAiProfiles(updatedProfiles);
+        setEditingProfile(null);
+    };
+
+    const handleCancelEdit = () => {
+        setEditingProfile(null);
+    };
+
+    const handleTestProfile = async () => {
+        if (!editingProfile || !editingProfile.apiKey) {
+            alert('请先填写 API Key');
+            return;
+        }
+
+        setTestingLlm(true);
+        setLlmStatus('idle');
+
+        try {
+            await generateContent('Hello, reply with OK', undefined, undefined);
+            // 注意：generateContent 是基于已保存的 profile 调用的，这里我们需要一种方式测试未保存的
+            // 为了简单，我们只测试连接。
+            // 实际上 fetch 逻辑都在 ai.ts 里。我们可以暂时模拟，或者直接调用 ai.ts 里未导出的函数?
+            // 更好的方式是保存后再测试，或者让 generateContent 支持传入临时配置。
+            // 此时 generateContent 只接受 profileId。
+
+            // 妥协方案：临时构造请求（代码重复，但在 UI层测试连接可以接受）
+            // 或者：直接在 ai.ts 导出 callGeminiApi 供测试用？不想暴露内部实现。
+            // 让我们在 UI 里简单 fetch 测试一下，类似之前的 Settings.tsx 实现
+
+            const config = editingProfile;
+            let response: Response;
+
+            if (config.provider === 'gemini') {
+                const baseUrl = config.baseUrl || 'https://generativelanguage.googleapis.com/v1beta';
+                const model = config.model || 'gemini-2.0-flash';
+                response = await fetch(`${baseUrl}/models/${model}:generateContent?key=${config.apiKey}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{ parts: [{ text: 'Hi' }] }],
+                        generationConfig: { maxOutputTokens: 5 },
+                    }),
+                });
+            } else {
+                const baseUrl = config.baseUrl || 'https://api.openai.com/v1';
+                const model = config.model || 'gpt-4o-mini';
+                response = await fetch(`${baseUrl}/chat/completions`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${config.apiKey}`,
+                    },
+                    body: JSON.stringify({
+                        model,
+                        messages: [{ role: 'user', content: 'Hi' }],
+                        max_tokens: 5,
+                    }),
+                });
+            }
+
+            if (response.ok) {
+                setLlmStatus('success');
+            } else {
+                setLlmStatus('error');
+            }
+        } catch (e) {
+            console.error(e);
+            setLlmStatus('error');
+        } finally {
+            setTestingLlm(false);
+        }
+    };
+
     // 导出所有设置
     const handleExportSettings = () => {
         const settings = {
@@ -97,6 +238,7 @@ export function Settings() {
             api_key: apiKey,
             default_push_config: defaultPushConfig,
             notification_settings: notifications,
+            ai_profiles: aiProfiles,
             message_templates: localStorage.getItem('message_templates'),
             exported_at: new Date().toISOString(),
         };
@@ -139,6 +281,10 @@ export function Settings() {
                     setNotifications(settings.notification_settings);
                     localStorage.setItem('notification_settings', JSON.stringify(settings.notification_settings));
                 }
+                if (settings.ai_profiles) {
+                    setAiProfiles(settings.ai_profiles);
+                    saveAiProfiles(settings.ai_profiles);
+                }
                 if (settings.message_templates) {
                     localStorage.setItem('message_templates', settings.message_templates);
                 }
@@ -162,11 +308,14 @@ export function Settings() {
         localStorage.removeItem('default_push_config');
         localStorage.removeItem('notification_settings');
         localStorage.removeItem('message_templates');
+        localStorage.removeItem('ai_profiles');
+        localStorage.removeItem('llm_api_config'); // cleanup old
 
         setApiUrl('');
         setApiKey('');
         setDefaultPushConfig({ appid: '', secret: '', template_id: '', push_service_url: 'http://1.94.168.67:5566' });
         setNotifications({ enableSound: true, enableDesktop: false });
+        setAiProfiles([]);
 
         alert('所有数据已清除');
     };
@@ -194,6 +343,13 @@ export function Settings() {
                     onClick={() => setActiveTab('push')}
                 >
                     📱 推送设置
+                </button>
+
+                <button
+                    className={`tab ${activeTab === 'ai' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('ai')}
+                >
+                    🧠 AI 模型池
                 </button>
                 <button
                     className={`tab ${activeTab === 'about' ? 'active' : ''}`}
@@ -348,9 +504,25 @@ export function Settings() {
                             </div>
                         </div>
 
-                        <div className="form-actions">
+                        <div className="form-actions" style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                                <button className="btn btn-secondary" onClick={() => setManageModal({ open: true, category: 'push_config', title: '推送配置库' })}>
+                                    📂 配置库
+                                </button>
+                                <button className="btn btn-ghost" onClick={async () => {
+                                    const name = prompt('请输入配置名称 (用于库保存)', '我的推送配置');
+                                    if (name) {
+                                        try {
+                                            await configApi.create({ category: 'push_config', name, value: JSON.stringify(defaultPushConfig) });
+                                            alert('已保存到配置库');
+                                        } catch (e) { alert('保存失败'); }
+                                    }
+                                }}>
+                                    ✨ 保存当前到库
+                                </button>
+                            </div>
                             <button className="btn btn-primary" onClick={handleSavePushConfig}>
-                                💾 保存配置
+                                💾 保存本地
                             </button>
                         </div>
                     </div>
@@ -409,6 +581,221 @@ export function Settings() {
                 </div>
             )}
 
+
+
+            {/* AI/LLM 配置 (新版多模型) */}
+            {activeTab === 'ai' && (
+                <div className="settings-section">
+                    {/* 模型列表 */}
+                    {!editingProfile ? (
+                        <div className="card">
+                            <div className="card-header">
+                                <div>
+                                    <h3 className="card-title">🧠 AI 模型池</h3>
+                                    <p className="card-subtitle">
+                                        管理多个 AI 模型配置，可用于 NLP 解析、内容润色和趋势分析
+                                    </p>
+                                </div>
+                                <div style={{ display: 'flex', gap: '8px' }}>
+                                    <button className="btn btn-secondary btn-sm" onClick={() => setManageModal({ open: true, category: 'ai_profile', title: 'AI 模型库' })}>
+                                        📂 库管理
+                                    </button>
+                                    <button className="btn btn-primary btn-sm" onClick={handleAddProfile}>
+                                        ➕ 添加模型
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div className="profile-list">
+                                {aiProfiles.length === 0 ? (
+                                    <div className="empty-state" style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                                        暂无配置的 AI 模型，请点击上方按钮添加。
+                                    </div>
+                                ) : (
+                                    aiProfiles.map(profile => (
+                                        <div key={profile.id} className="profile-item" style={{
+                                            border: '1px solid var(--border)',
+                                            borderRadius: '8px',
+                                            padding: '16px',
+                                            marginBottom: '12px',
+                                            display: 'flex',
+                                            justifyContent: 'space-between',
+                                            alignItems: 'center',
+                                            backgroundColor: 'var(--bg-card)'
+                                        }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                                <div style={{
+                                                    width: '40px', height: '40px', borderRadius: '50%',
+                                                    backgroundColor: 'var(--bg-hover)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                    fontSize: '20px'
+                                                }}>
+                                                    {profile.provider === 'gemini' ? '💎' : '🤖'}
+                                                </div>
+                                                <div>
+                                                    <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                        {profile.name}
+                                                        {profile.isDefault && <span className="badge badge-primary">默认</span>}
+                                                    </div>
+                                                    <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                                                        {profile.provider === 'gemini' ? 'Google Gemini' : 'OpenAI Compatible'} | {profile.model || 'Auto'}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div style={{ display: 'flex', gap: '8px' }}>
+                                                <button className="btn btn-ghost btn-sm" title="保存到库" onClick={async () => {
+                                                    try {
+                                                        await configApi.create({
+                                                            category: 'ai_profile',
+                                                            name: profile.name,
+                                                            value: JSON.stringify(profile)
+                                                        });
+                                                        alert('已同步到云端库');
+                                                    } catch (e) { alert('同步失败'); }
+                                                }}>
+                                                    ☁️
+                                                </button>
+                                                <button className="btn btn-secondary btn-sm" onClick={() => handleEditProfile(profile)}>
+                                                    ✏️ 编辑
+                                                </button>
+                                                <button className="btn btn-danger btn-sm" onClick={() => handleDeleteProfile(profile.id)}>
+                                                    🗑 删除
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+                        </div>
+                    ) : (
+                        // 编辑/新增模式
+                        <div className="card">
+                            <div className="card-header">
+                                <div>
+                                    <h3 className="card-title">{editingProfile.id === aiProfiles.find(p => p.id === editingProfile.id)?.id ? '✏️ 编辑模型' : '➕ 添加模型'}</h3>
+                                </div>
+                            </div>
+
+                            <div className="form-group">
+                                <label className="form-label">配置名称</label>
+                                <input
+                                    type="text"
+                                    className="form-input"
+                                    placeholder="例如：My Free Gemini"
+                                    value={editingProfile.name}
+                                    onChange={(e) => setEditingProfile(prev => ({ ...prev!, name: e.target.value }))}
+                                />
+                            </div>
+
+                            <div className="form-group">
+                                <label className="form-label">提供商</label>
+                                <select
+                                    className="form-select"
+                                    value={editingProfile.provider}
+                                    onChange={(e) => setEditingProfile(prev => ({
+                                        ...prev!,
+                                        provider: e.target.value as AiProvider,
+                                        // Auto preset Base URL if switching
+                                        baseUrl: e.target.value === 'gemini'
+                                            ? ''
+                                            : (e.target.value === 'openai' ? 'https://api.openai.com/v1' : '')
+                                    }))}
+                                >
+                                    <option value="gemini">Google Gemini</option>
+                                    <option value="openai">OpenAI</option>
+                                    <option value="custom">Custom (OpenAI Compatible)</option>
+                                </select>
+                            </div>
+
+                            <div className="form-group">
+                                <label className="form-label">API Key *</label>
+                                <input
+                                    type="password"
+                                    className="form-input"
+                                    value={editingProfile.apiKey}
+                                    onChange={(e) => setEditingProfile(prev => ({ ...prev!, apiKey: e.target.value }))}
+                                />
+                            </div>
+
+                            {/* 高级选项 details */}
+                            <details open={!!editingProfile.baseUrl || !!editingProfile.model}>
+                                <summary style={{ cursor: 'pointer', marginBottom: '12px', color: 'var(--primary)' }}>高级设置</summary>
+                                <div className="form-group">
+                                    <label className="form-label">Base URL (可选)</label>
+                                    <input
+                                        type="url"
+                                        className="form-input"
+                                        placeholder="例如：https://api.openai.com/v1"
+                                        value={editingProfile.baseUrl || ''}
+                                        onChange={(e) => setEditingProfile(prev => ({ ...prev!, baseUrl: e.target.value }))}
+                                    />
+                                </div>
+                                <div className="form-group">
+                                    <label className="form-label">模型名称 (可选)</label>
+                                    <input
+                                        type="text"
+                                        className="form-input"
+                                        placeholder={editingProfile.provider === 'gemini' ? 'gemini-2.0-flash' : 'gpt-4o'}
+                                        value={editingProfile.model || ''}
+                                        onChange={(e) => setEditingProfile(prev => ({ ...prev!, model: e.target.value }))}
+                                    />
+                                </div>
+                            </details>
+
+                            <div className="form-group">
+                                <label className="toggle-item">
+                                    <input
+                                        type="checkbox"
+                                        checked={editingProfile.isDefault || false}
+                                        onChange={(e) => setEditingProfile(prev => ({ ...prev!, isDefault: e.target.checked }))}
+                                    />
+                                    <span className="toggle-label">设为默认模型</span>
+                                </label>
+                            </div>
+
+                            {/* 连接状态 */}
+                            {llmStatus !== 'idle' && (
+                                <div
+                                    className={`alert ${llmStatus === 'success' ? 'alert-success' : 'alert-error'
+                                        }`}
+                                >
+                                    {llmStatus === 'success' ? (
+                                        <>✅ 测试通过！</>
+                                    ) : (
+                                        <>❌ 连接失败，请检查 API Key</>
+                                    )}
+                                </div>
+                            )}
+
+                            <div className="form-actions">
+                                <button className="btn btn-secondary" onClick={handleTestProfile} disabled={testingLlm}>
+                                    {testingLlm ? '测试中...' : '🔍 测试连接'}
+                                </button>
+                                <div style={{ flex: 1 }}></div>
+                                <button className="btn btn-secondary" onClick={handleCancelEdit}>取消</button>
+                                <button className="btn btn-primary" onClick={handleSaveProfile}>💾 保存</button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* 功能说明 */}
+                    <div className="card" style={{ marginTop: '24px' }}>
+                        <div className="card-header">
+                            <div>
+                                <h3 className="card-title">💡 功能说明</h3>
+                            </div>
+                        </div>
+
+                        <div style={{ padding: '16px', color: 'var(--text-muted)', fontSize: '14px', lineHeight: '1.8' }}>
+                            <p><strong>多模型支持：</strong></p>
+                            <ul style={{ marginLeft: '20px', marginTop: '8px' }}>
+                                <li>您可以配置多个 API Key，例如同时使用 Gemini（免费）和 GPT-4。</li>
+                                <li>通过设置「默认模型」，系统将在智能输入、润色等场景优先使用该模型。</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* 关于 */}
             {activeTab === 'about' && (
                 <div className="settings-section">
@@ -432,7 +819,7 @@ export function Settings() {
                             <div className="about-details">
                                 <div className="about-row">
                                     <span className="about-label">版本</span>
-                                    <span className="about-value">v1.0.0</span>
+                                    <span className="about-value">v1.2.0</span>
                                 </div>
                                 <div className="about-row">
                                     <span className="about-label">技术栈</span>
@@ -472,7 +859,7 @@ export function Settings() {
                         </div>
 
                         <div className="form-hint" style={{ marginTop: '16px' }}>
-                            导出的设置包括 API 配置、推送配置、通知设置和自定义消息模板
+                            导出的设置包括 API 配置、推送配置、通知设置和 AI 模型配置
                         </div>
                     </div>
 
@@ -510,6 +897,46 @@ export function Settings() {
                     </div>
                 </div>
             )}
+            {/* 配置管理弹窗 */}
+            {manageModal.open && (
+                <ConfigManagerModal
+                    isOpen={manageModal.open}
+                    onClose={() => setManageModal(prev => ({ ...prev, open: false }))}
+                    category={manageModal.category}
+                    title={manageModal.title}
+                    onSelect={(value) => {
+                        try {
+                            const val = JSON.parse(value);
+                            if (manageModal.category === 'push_config') {
+                                setDefaultPushConfig(val);
+                                localStorage.setItem('default_push_config', value);
+                                alert('已应用并保存推送配置');
+                            }
+                            if (manageModal.category === 'ai_profile') {
+                                // 检查是否已存在
+                                const profiles = getAiProfiles();
+                                // 如果 val 是单个 profile
+                                if (val.id) {
+                                    if (profiles.find(p => p.id === val.id)) {
+                                        if (confirm('模型池中已存在相同 ID 的模型，是否覆盖？')) {
+                                            const newProfiles = profiles.map(p => p.id === val.id ? val : p);
+                                            saveAiProfiles(newProfiles);
+                                            setAiProfiles(newProfiles);
+                                        }
+                                    } else {
+                                        const newProfiles = [...profiles, val];
+                                        saveAiProfiles(newProfiles);
+                                        setAiProfiles(newProfiles);
+                                        alert('已添加到模型池');
+                                    }
+                                }
+                            }
+                        } catch (e) { alert('应用失败：' + e); }
+                    }}
+                />
+            )}
         </div>
     );
 }
+
+export default Settings;

@@ -42,6 +42,11 @@ export function error(message: string, code = 1, status = 400): Response {
 }
 
 /**
+ * JSON 响应（success 的别名）
+ */
+export const json = success;
+
+/**
  * 参数验证错误
  */
 export function badRequest(message: string): Response {

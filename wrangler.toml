@@ -1,6 +1,6 @@
-name = "never-forget"
+name = "cf-reminder"
 main = "src/index.ts"
-compatibility_date = "2024-01-17"
+compatibility_date = "2026-01-17"
 
 # 定时触发器：每分钟执行一次
 [triggers]
@@ -10,21 +10,46 @@ crons = ["* * * * *"]
 [[d1_databases]]
 binding = "DB"
 database_name = "reminder-db"
-database_id = "your_d1_database_id"
+database_id = "9ad6af77-0296-4e6c-b872-dd1a6d060b14"
 
 # 环境变量（非敏感）
 [vars]
 # Worker 自身的基础 URL（用于兼容旧配置）
-WORKER_BASE_URL = "https://reminder.your-domain.com"
+WORKER_BASE_URL = "https://reminder.yolo.ccwu.cc"
 # 外部推送服务地址 (go-wxpush)
 # ⚠️ 重要：CF Workers 无法访问 HTTP 协议的直接 IP 地址（会被 Cloudflare 拦截返回 error code: 1003）
 # 必须使用 HTTPS + 域名的方式
-PUSH_SERVICE_URL = "https://push.your-domain.com"
+PUSH_SERVICE_URL = "https://push.yolo.ccwu.cc"
 # 旧版兼容（保留但不再使用）
-DEFAULT_PUSH_URL = "https://push.your-domain.com/wxsend"
+DEFAULT_PUSH_URL = "https://push.yolo.ccwu.cc/wxsend"
 TIMEZONE = "Asia/Shanghai"
+# 邮件接收域名（用于生成用户专属邮箱地址）
+# 需要在 Cloudflare Dashboard 中配置 Email Routing，并将域名的邮件转发到此 Worker
+EMAIL_DOMAIN = "neverforget.email"
 
 # 开发环境配置
 [dev]
 port = 8787
 local_protocol = "http"
+
+# ============================================================
+# 📧 邮件路由配置说明 (Email Routing)
+# ============================================================
+# 
+# 要启用邮件转发功能，需要在 Cloudflare Dashboard 中配置：
+#
+# 1. 进入 Cloudflare Dashboard -> 选择您的域名 -> Email -> Email Routing
+#
+# 2. 启用 Email Routing 功能
+#
+# 3. 添加 Catch-all 规则：
+#    - 在 "Routing rules" 中添加规则
+#    - 选择 "Catch-all address" 
+#    - Action 选择 "Send to a Worker"
+#    - 选择此 Worker (cf-reminder)
+#
+# 4. 确保域名 DNS 已正确配置 MX 记录（Cloudflare 会自动添加）
+#
+# 配置完成后，发送到 *@your-domain.com 的邮件都会被此 Worker 处理
+# ============================================================
+
