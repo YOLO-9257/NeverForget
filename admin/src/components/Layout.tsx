@@ -1,4 +1,5 @@
 import { NavLink, Outlet } from 'react-router-dom';
+import styles from './Layout.module.css';
 
 interface LayoutProps {
     onLogout?: () => void;
@@ -88,6 +89,13 @@ export function Layout({ onLogout }: LayoutProps) {
                             <span className="nav-item-icon">📊</span>
                             <span>执行日志</span>
                         </NavLink>
+                        <NavLink
+                            to="/notifications"
+                            className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+                        >
+                            <span className="nav-item-icon">🔔</span>
+                            <span>通知中心</span>
+                        </NavLink>
                     </div>
 
                     <div className="nav-section">
@@ -108,14 +116,7 @@ export function Layout({ onLogout }: LayoutProps) {
                         <span className="sidebar-version">v1.0.0</span>
                         <button
                             onClick={handleLogout}
-                            className="sidebar-link"
-                            style={{
-                                background: 'none',
-                                border: 'none',
-                                cursor: 'pointer',
-                                padding: 0,
-                                font: 'inherit',
-                            }}
+                            className={`sidebar-link ${styles.logoutBtn}`}
                         >
                             🚪 退出登录
                         </button>

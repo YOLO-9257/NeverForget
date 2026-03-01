@@ -1,0 +1,189 @@
+/**
+ * Badge 组件样式
+ * @author zhangws
+ */
+
+.badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-xs);
+    font-family: var(--font-sans);
+    font-weight: var(--font-medium);
+    white-space: nowrap;
+    user-select: none;
+    border-radius: var(--radius-full);
+    transition: all var(--transition-fast);
+}
+
+/* ========================================
+ * 尺寸变体
+ * ======================================== */
+
+.sm {
+    height: 20px;
+    padding: 0 var(--space-sm);
+    font-size: 10px;
+}
+
+.md {
+    height: 24px;
+    padding: 0 var(--space-sm);
+    font-size: var(--text-xs);
+}
+
+.lg {
+    height: 28px;
+    padding: 0 var(--space-md);
+    font-size: var(--text-sm);
+}
+
+.iconOnly {
+    padding: 0;
+    aspect-ratio: 1;
+}
+
+/* ========================================
+ * 变体（实心）
+ * ======================================== */
+
+.default {
+    background: var(--bg-glass);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-subtle);
+}
+
+.primary {
+    background: var(--primary-light);
+    color: var(--primary);
+    border: 1px solid transparent;
+}
+
+.secondary {
+    background: rgba(139, 92, 246, 0.15);
+    color: var(--secondary);
+    border: 1px solid transparent;
+}
+
+.success {
+    background: var(--success-light);
+    color: var(--success);
+    border: 1px solid transparent;
+}
+
+.warning {
+    background: var(--warning-light);
+    color: var(--warning);
+    border: 1px solid transparent;
+}
+
+.danger {
+    background: var(--danger-light);
+    color: var(--danger);
+    border: 1px solid transparent;
+}
+
+.info {
+    background: var(--info-light);
+    color: var(--info);
+    border: 1px solid transparent;
+}
+
+/* ========================================
+ * 轮廓变体
+ * ======================================== */
+
+.outline.default {
+    background: transparent;
+    border-color: var(--border-default);
+    color: var(--text-secondary);
+}
+
+.outline.primary {
+    background: transparent;
+    border-color: var(--primary);
+    color: var(--primary);
+}
+
+.outline.secondary {
+    background: transparent;
+    border-color: var(--secondary);
+    color: var(--secondary);
+}
+
+.outline.success {
+    background: transparent;
+    border-color: var(--success);
+    color: var(--success);
+}
+
+.outline.warning {
+    background: transparent;
+    border-color: var(--warning);
+    color: var(--warning);
+}
+
+.outline.danger {
+    background: transparent;
+    border-color: var(--danger);
+    color: var(--danger);
+}
+
+.outline.info {
+    background: transparent;
+    border-color: var(--info);
+    color: var(--info);
+}
+
+/* ========================================
+ * 状态指示器
+ * ======================================== */
+
+.dot {
+    padding-left: var(--space-sm);
+}
+
+.dotIndicator {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    flex-shrink: 0;
+}
+
+.pulse .dotIndicator {
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulse {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.5;
+    }
+}
+
+/* ========================================
+ * 图标
+ * ======================================== */
+
+.icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.icon svg {
+    width: 1em;
+    height: 1em;
+}
+
+.content {
+    display: inline-flex;
+    align-items: center;
+}

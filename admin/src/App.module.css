@@ -1,0 +1,15 @@
+/* App.module.css - 应用入口样式 */
+
+.loadingContainer {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 16px;
+}
+
+.loadingSpinner {
+    margin-right: 12px;
+}

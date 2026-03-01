@@ -9,6 +9,37 @@
 
 import { PushConfig, PushResponse, Env } from '../types';
 
+function normalizeUrl(input: unknown): string {
+    if (typeof input !== 'string') return '';
+    return input.trim().replace(/\/+$/, '');
+}
+
+/**
+ * 规范化推送发送接口 URL（统一使用 /wxpush）
+ */
+export function resolvePushApiUrl(pushServiceUrl: string): string {
+    let normalized = normalizeUrl(pushServiceUrl);
+    if (!normalized) {
+        return '';
+    }
+
+    // Fix: Handle legacy /wxpush path
+    if (normalized.endsWith('/wxpush')) {
+        normalized = normalized.slice(0, -'/wxpush'.length);
+    }
+
+    // Default go-wxpush endpoint is /wxsend
+    const marker = '/wxsend';
+    const lower = normalized.toLowerCase();
+    const markerIndex = lower.indexOf(marker);
+    if (markerIndex >= 0) {
+        return normalized.slice(0, markerIndex + marker.length);
+    }
+
+    // Append marker if not present
+    return `${normalized}${marker}`;
+}
+
 /**
  * 调用外部推送服务发送消息
  * @param pushServiceUrl 外部推送服务地址 (go-wxpush)
@@ -44,16 +75,19 @@ export async function sendPush(
             requestBody.template_name = config.template_name;
         }
 
-        // 确保 pushServiceUrl 以 /wxsend 结尾
-        let apiUrl = pushServiceUrl.replace(/\/$/, '');
-        if (!apiUrl.endsWith('/wxsend')) {
-            apiUrl += '/wxsend';
+        const apiUrl = resolvePushApiUrl(pushServiceUrl);
+        if (!apiUrl) {
+            const duration = Date.now() - startTime;
+            return {
+                success: false,
+                error: '推送服务地址为空或格式不正确',
+                duration,
+            };
         }
 
         console.log(`[Pusher] 调用外部推送服务: ${apiUrl}`);
         console.log(`[Pusher] requestBody.template_name = ${requestBody.template_name}`);
 
-        // 发送请求到 go-wxpush 服务
         const response = await fetch(apiUrl, {
             method: 'POST',
             headers: {
@@ -63,11 +97,8 @@ export async function sendPush(
         });
 
         const duration = Date.now() - startTime;
-
-        // 先获取响应文本
         const responseText = await response.text();
 
-        // 检查 HTTP 状态码
         if (!response.ok) {
             // 检查是否是 Cloudflare 错误（如 error code: 1003）
             if (responseText.includes('error code:')) {
@@ -81,7 +112,7 @@ export async function sendPush(
             }
             return {
                 success: false,
-                error: `推送服务返回 HTTP ${response.status}: ${responseText.substring(0, 200)}`,
+                error: `推送服务返回 HTTP ${response.status} @ ${apiUrl}: ${responseText.substring(0, 200)}`,
                 duration,
             };
         }
@@ -90,10 +121,10 @@ export async function sendPush(
         let result: PushResponse;
         try {
             result = JSON.parse(responseText) as PushResponse;
-        } catch (parseError) {
+        } catch {
             return {
                 success: false,
-                error: `推送服务返回非 JSON 响应: ${responseText.substring(0, 200)}`,
+                error: `推送服务返回非 JSON 响应 @ ${apiUrl}: ${responseText.substring(0, 200)}`,
                 duration,
             };
         }
@@ -108,7 +139,7 @@ export async function sendPush(
             return {
                 success: false,
                 response: result,
-                error: `推送服务返回错误: ${result.errcode} - ${result.errmsg}`,
+                error: `推送服务返回错误 @ ${apiUrl}: ${result.errcode} - ${result.errmsg}`,
                 duration,
             };
         }
@@ -125,8 +156,8 @@ export async function sendPush(
 }
 
 /**
- * 处理公共推送请求 (/wxsend)
- * 保留此接口用于兼容，但实际会转发到配置的外部推送服务
+ * 处理公共推送请求 (/wxpush)
+ * 统一由该接口转发到配置的外部推送服务
  */
 export async function handlePublicPush(request: Request, env: Env): Promise<Response> {
     try {
@@ -141,22 +172,52 @@ export async function handlePublicPush(request: Request, env: Env): Promise<Resp
             return new Response('Method not allowed', { status: 405 });
         }
 
-        const { title, content, appid, secret, userid, template_id, custom_html, template_name, base_url } = params;
+        const {
+            title,
+            content,
+            appid,
+            secret,
+            userid,
+            template_id,
+            custom_html,
+            template_name,
+            callback_url,
+            base_url,
+            push_service_url,
+            push_url
+        } = params;
 
         if (!appid || !secret || !userid || !template_id) {
             return new Response(JSON.stringify({ error: 'Missing required parameters' }), { status: 400 });
         }
 
-        // 获取推送服务地址
-        const pushServiceUrl = base_url || env.PUSH_SERVICE_URL || env.DEFAULT_PUSH_URL;
+        // 获取推送服务地址（优先显式 push_service_url，其次服务端环境配置）
+        let pushServiceUrl = normalizeUrl(push_service_url) || normalizeUrl(push_url);
+        if (!pushServiceUrl) {
+            pushServiceUrl = normalizeUrl(env.PUSH_SERVICE_URL) || normalizeUrl(env.DEFAULT_PUSH_URL);
+        }
+        // 兼容旧调用：历史上有人把 base_url 当成 push 服务地址传入
+        if (!pushServiceUrl) {
+            pushServiceUrl = normalizeUrl(base_url);
+        }
 
         if (!pushServiceUrl) {
             return new Response(JSON.stringify({ error: 'Push service URL not configured' }), { status: 500 });
         }
 
+        const detailBaseUrl = normalizeUrl(base_url) || normalizeUrl(env.WORKER_BASE_URL) || pushServiceUrl;
+
         const result = await sendPush(
             pushServiceUrl,
-            { appid, secret, userid, template_id, base_url: pushServiceUrl, template_name },
+            {
+                appid,
+                secret,
+                userid,
+                template_id,
+                base_url: detailBaseUrl,
+                callback_url: typeof callback_url === 'string' ? callback_url.trim() : undefined,
+                template_name
+            },
             title || '消息推送',
             content || '无内容'
         );

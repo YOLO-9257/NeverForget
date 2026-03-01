@@ -365,6 +365,8 @@ export async function listPushTracking(
         const offset = parseInt(url.searchParams.get('offset') || '0');
         const status = url.searchParams.get('status');
         const channelId = url.searchParams.get('channel_id');
+        const messageType = url.searchParams.get('message_type');
+        const keyword = url.searchParams.get('keyword')?.trim();
 
         let query = `
             SELECT pt.*, nc.name as channel_name, nc.type as channel_type_name
@@ -382,6 +384,17 @@ export async function listPushTracking(
         if (channelId) {
             query += ` AND pt.channel_id = ?`;
             params.push(channelId);
+        }
+
+        if (messageType) {
+            query += ` AND pt.message_type = ?`;
+            params.push(messageType);
+        }
+
+        if (keyword) {
+            query += ` AND (pt.title LIKE ? OR pt.content_preview LIKE ? OR pt.message_id LIKE ?)`;
+            const likeKeyword = `%${keyword}%`;
+            params.push(likeKeyword, likeKeyword, likeKeyword);
         }
 
         query += ` ORDER BY pt.created_at DESC LIMIT ? OFFSET ?`;
@@ -408,13 +421,56 @@ export async function listPushTracking(
             countParams.push(channelId);
         }
 
+        if (messageType) {
+            countQuery += ` AND pt.message_type = ?`;
+            countParams.push(messageType);
+        }
+
+        if (keyword) {
+            countQuery += ` AND (pt.title LIKE ? OR pt.content_preview LIKE ? OR pt.message_id LIKE ?)`;
+            const likeKeyword = `%${keyword}%`;
+            countParams.push(likeKeyword, likeKeyword, likeKeyword);
+        }
+
         const countResult = await env.DB.prepare(countQuery).bind(...countParams).first<{ total: number }>();
+
+        let summaryQuery = `
+            SELECT pt.status, COUNT(*) as count
+            FROM push_tracking pt
+            JOIN notification_channels nc ON pt.channel_id = nc.id
+            WHERE nc.user_key = ?
+        `;
+        const summaryParams: any[] = [userKey];
+
+        if (channelId) {
+            summaryQuery += ` AND pt.channel_id = ?`;
+            summaryParams.push(channelId);
+        }
+
+        if (messageType) {
+            summaryQuery += ` AND pt.message_type = ?`;
+            summaryParams.push(messageType);
+        }
+
+        if (keyword) {
+            summaryQuery += ` AND (pt.title LIKE ? OR pt.content_preview LIKE ? OR pt.message_id LIKE ?)`;
+            const likeKeyword = `%${keyword}%`;
+            summaryParams.push(likeKeyword, likeKeyword, likeKeyword);
+        }
+
+        summaryQuery += ` GROUP BY pt.status`;
+        const summaryResult = await env.DB.prepare(summaryQuery).bind(...summaryParams).all<{ status: string; count: number }>();
+        const statusSummary = (summaryResult.results || []).reduce<Record<string, number>>((acc, row) => {
+            acc[row.status] = row.count;
+            return acc;
+        }, {});
 
         return success({
             items: result.results || [],
             total: countResult?.total || 0,
             limit,
             offset,
+            status_summary: statusSummary,
         });
     } catch (error) {
         console.error('获取推送追踪列表失败:', error);

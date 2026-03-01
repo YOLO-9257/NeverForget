@@ -48,7 +48,9 @@ export function getAiProfiles(): AiProfile[] {
                 };
                 saveAiProfiles([defaultProfile]);
                 return [defaultProfile];
-            } catch { }
+            } catch (error) {
+                console.warn('迁移旧 AI 配置失败:', error);
+            }
         }
         return [];
     }

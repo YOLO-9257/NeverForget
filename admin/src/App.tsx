@@ -11,12 +11,15 @@ import { Logs } from './pages/Logs';
 import { Login } from './pages/Login';
 import { AiButler } from './pages/AiButler';
 import { EmailHub } from './pages/EmailHub';
+import { NotificationCenter } from './pages/NotificationCenter';
+import { AUTH_EXPIRED_EVENT } from './api';
+import styles from './App.module.css';
 import './index.css';
 
 
 /**
  * CF-Reminder 管理后台应用入口
- * 
+ *
  * 路由结构：
  * - /login : 登录页
  * - / : 仪表盘
@@ -47,8 +50,23 @@ function App() {
     checkAuth();
   }, []);
 
+  // 统一处理 401 会话过期
+  useEffect(() => {
+    const handleAuthExpired = () => {
+      setIsLoggedIn(false);
+    };
+
+    window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+    return () => {
+      window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+    };
+  }, []);
+
   const location = useLocation();
-  const from = location.state?.from?.pathname || '/';
+  const fromLocation = location.state?.from;
+  const from = fromLocation
+    ? `${fromLocation.pathname || '/'}${fromLocation.search || ''}`
+    : '/';
 
   // 登录成功回调
   const handleLogin = () => {
@@ -57,24 +75,17 @@ function App() {
 
   // 登出回调
   const handleLogout = () => {
-    localStorage.removeItem('api_url');
+    localStorage.removeItem('auth_token');
     localStorage.removeItem('api_key');
+    localStorage.removeItem('username');
     setIsLoggedIn(false);
   };
 
   // 加载中
   if (isLoading) {
     return (
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        height: '100vh',
-        background: 'var(--bg)',
-        color: 'var(--text)',
-        fontSize: '16px',
-      }}>
-        <div className="spinner" style={{ marginRight: '12px' }} />
+      <div className={styles.loadingContainer}>
+        <div className={`spinner ${styles.loadingSpinner}`} />
         正在加载...
       </div>
     );
@@ -118,6 +129,7 @@ function App() {
         {/* 内容管理 */}
         <Route path="templates" element={<Templates />} />
         <Route path="logs" element={<Logs />} />
+        <Route path="notifications" element={<NotificationCenter />} />
 
         {/* 系统设置 */}
         <Route path="settings" element={<Settings />} />

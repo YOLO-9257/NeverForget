@@ -1,0 +1,128 @@
+/**
+ * Card 组件样式
+ * @author zhangws
+ */
+
+.card {
+    background: var(--bg-elevated);
+    border-radius: var(--radius-lg);
+    transition: all var(--transition-normal);
+    position: relative;
+}
+
+/* ========================================
+ * 变体
+ * ======================================== */
+
+.default {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-subtle);
+}
+
+.elevated {
+    background: var(--bg-surface);
+    box-shadow: var(--shadow-md);
+}
+
+.outlined {
+    background: transparent;
+    border: 1px solid var(--border-default);
+}
+
+.glass {
+    background: var(--bg-glass);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid var(--border-subtle);
+}
+
+/* ========================================
+ * 状态
+ * ======================================== */
+
+.padded {
+    padding: var(--space-lg);
+}
+
+.clickable {
+    cursor: pointer;
+}
+
+.clickable:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-lg);
+    border-color: var(--border-default);
+}
+
+.clickable:focus {
+    outline: none;
+}
+
+.clickable:focus-visible {
+    box-shadow: 0 0 0 3px var(--border-focus);
+}
+
+.clickable:active {
+    transform: translateY(0);
+}
+
+.glow {
+    box-shadow: var(--shadow-glow);
+}
+
+.glow:hover {
+    box-shadow: var(--shadow-glow-lg);
+}
+
+/* ========================================
+ * 子组件
+ * ======================================== */
+
+.header {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    margin-bottom: var(--space-md);
+}
+
+.title {
+    margin: 0;
+    font-size: var(--text-lg);
+    font-weight: var(--font-semibold);
+    color: var(--text-primary);
+    line-height: var(--leading-tight);
+}
+
+.description {
+    margin: 0;
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    line-height: var(--leading-normal);
+}
+
+.content {
+    color: var(--text-primary);
+}
+
+.footer {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    margin-top: var(--space-lg);
+    padding-top: var(--space-lg);
+    border-top: 1px solid var(--border-subtle);
+}
+
+/* ========================================
+ * 响应式
+ * ======================================== */
+
+@media (max-width: 640px) {
+    .padded {
+        padding: var(--space-md);
+    }
+
+    .title {
+        font-size: var(--text-base);
+    }
+}

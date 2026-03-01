@@ -1,0 +1,169 @@
+/* AiButler.module.css - 智能管家页面样式 */
+
+.container {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 100px);
+}
+
+.chatCard {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    padding: 0;
+}
+
+/* 记忆摘要横幅 */
+.summaryBanner {
+    padding: 12px 24px;
+    background: rgba(99, 102, 241, 0.05);
+    border-bottom: 1px solid var(--border-default);
+    font-size: 0.9em;
+    color: var(--text-secondary);
+}
+
+.summaryBanner strong {
+    color: var(--text-primary);
+}
+
+/* 消息区域 */
+.messagesArea {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+/* 空状态 */
+.emptyState {
+    text-align: center;
+    color: var(--text-muted);
+    margin-top: 40px;
+}
+
+/* 消息容器 */
+.messageWrapper {
+    max-width: 70%;
+}
+
+.messageWrapperUser {
+    align-self: flex-end;
+}
+
+.messageWrapperModel {
+    align-self: flex-start;
+}
+
+/* 消息气泡 */
+.messageBubble {
+    padding: 12px 16px;
+    border-radius: 12px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.messageBubbleUser {
+    background: var(--primary);
+    color: white;
+    border-top-right-radius: 2px;
+}
+
+.messageBubbleModel {
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    border-top-left-radius: 2px;
+}
+
+/* 消息时间戳 */
+.messageTimestamp {
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-top: 4px;
+}
+
+.messageTimestampUser {
+    text-align: right;
+}
+
+.messageTimestampModel {
+    text-align: left;
+}
+
+/* 加载状态 */
+.loadingState {
+    align-self: flex-start;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-muted);
+    padding: 12px;
+}
+
+/* 错误状态 */
+.errorState {
+    align-self: center;
+    color: var(--danger);
+    font-size: 0.9em;
+    padding: 8px;
+}
+
+/* 输入区域 */
+.inputArea {
+    padding: 16px 24px;
+    border-top: 1px solid var(--border-default);
+    background: var(--bg-elevated);
+}
+
+.inputWrapper {
+    display: flex;
+    gap: 12px;
+}
+
+.textarea {
+    flex: 1;
+    height: 50px;
+    padding: 12px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-default);
+    background: var(--bg-base);
+    color: var(--text-primary);
+    resize: none;
+    font-family: inherit;
+    transition: border-color var(--transition-fast);
+}
+
+.textarea:focus {
+    outline: none;
+    border-color: var(--border-focus);
+}
+
+.textarea::placeholder {
+    color: var(--text-muted);
+}
+
+
+
+/* 底部提示 */
+.footerHint {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 8px;
+    text-align: center;
+}
+
+/* 用户消息中的 Markdown 样式覆盖 */
+:global(.user-message) {
+    color: white;
+}
+
+:global(.user-message) a {
+    color: rgba(255, 255, 255, 0.9);
+    text-decoration: underline;
+}
+
+:global(.user-message) code {
+    background: rgba(255, 255, 255, 0.2);
+    color: white;
+}

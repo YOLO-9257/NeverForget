@@ -1,0 +1,202 @@
+/**
+ * AboutTab 样式
+ * @author zhangws
+ */
+
+.section {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+}
+
+.card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 24px;
+}
+
+.cardHeader {
+    margin-bottom: 20px;
+}
+
+.cardTitle {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+}
+
+.cardSubtitle {
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    margin: 4px 0 0;
+}
+
+/* 关于信息 */
+.aboutInfo {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+}
+
+.logoArea {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.logoIcon {
+    width: 64px;
+    height: 64px;
+    background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+    border-radius: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 32px;
+    box-shadow: var(--shadow-primary);
+}
+
+.logoText h2 {
+    margin: 0;
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.logoText p {
+    margin: 4px 0 0;
+    font-size: 14px;
+    color: var(--text-muted);
+}
+
+.details {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.detailRow {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    background: var(--bg-elevated);
+    border-radius: var(--radius-md);
+}
+
+.detailLabel {
+    font-size: 14px;
+    color: var(--text-muted);
+}
+
+.detailValue {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+/* 数据操作 */
+.dataActions {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.hint {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 16px;
+}
+
+/* 帮助链接 */
+.helpLinks {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.helpLink {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 16px;
+    background: var(--bg-elevated);
+    border-radius: var(--radius-md);
+    text-decoration: none;
+    transition: all var(--transition-fast);
+}
+
+.helpLink:hover {
+    background: var(--bg-glass-hover);
+    transform: translateX(4px);
+}
+
+.helpLinkIcon {
+    font-size: 24px;
+}
+
+.helpLinkText {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.helpLinkTitle {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.helpLinkDesc {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+/* 按钮 */
+.btnSecondary,
+.btnDanger {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 20px;
+    border: none;
+    border-radius: var(--radius-md);
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.btnSecondary {
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+}
+
+.btnSecondary:hover {
+    background: var(--bg-glass-hover);
+}
+
+.btnDanger {
+    background: transparent;
+    color: var(--error);
+    border: 1px solid var(--error);
+}
+
+.btnDanger:hover {
+    background: hsla(345, 95%, 55%, 0.1);
+}
+
+@media (max-width: 640px) {
+    .dataActions {
+        flex-direction: column;
+    }
+
+    .dataActions button {
+        width: 100%;
+        justify-content: center;
+    }
+}

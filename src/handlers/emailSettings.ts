@@ -8,6 +8,7 @@
 import { Env, EmailSettings, EmailForwardLog } from '../types';
 import { success, badRequest, notFound, serverError } from '../utils/response';
 import { encryptPassword } from '../utils/crypto';
+import { sendPush } from '../services/pusher';
 
 /**
  * 邮件设置响应接口
@@ -321,15 +322,7 @@ export async function getEmailLogs(
  * 测试邮件转发配置
  * 发送一封测试推送验证配置是否有效
  * 
- * 注意：此功能使用 go-wxpush 服务（/wxsend 接口）进行推送
- * wxpush_token 在此场景下实际上是用于标识用户的 Token/UID
- * 需要在 go-wxpush 服务端配置对应的微信推送凭据
- */
-/**
- * 测试邮件转发配置
- * 发送一封测试推送验证配置是否有效
- * 
- * 注意：此功能使用 go-wxpush 服务（/wxsend 接口）进行推送
+ * 注意：此功能使用 go-wxpush 服务（/wxpush 接口）进行推送
  * wxpush_token 在此场景下实际上是用于标识用户的 Token/UID
  * 需要在 go-wxpush 服务端配置对应的微信推送凭据
  */
@@ -349,11 +342,10 @@ export async function testEmailForward(env: Env, userKey: string): Promise<Respo
         }
 
         // 使用 go-wxpush 服务发送测试推送
-        const pushServiceUrl = settings.wxpush_url || env.PUSH_SERVICE_URL || 'https://wxpusher.zjiecode.com';
-
-        // 构建请求 - 使用 go-wxpush 的 /wxsend 接口格式
-        let apiUrl = pushServiceUrl.replace(/\/$/, '');
-        let requestBody: any;
+        const pushServiceUrl = (settings.wxpush_url || env.PUSH_SERVICE_URL || '').trim();
+        if (!pushServiceUrl) {
+            return badRequest('请先配置 WxPush URL');
+        }
 
         // 检测是否为 WxPusher 官方地址
         const isOfficialWxPusher = pushServiceUrl.includes('wxpusher.zjiecode.com');
@@ -361,9 +353,6 @@ export async function testEmailForward(env: Env, userKey: string): Promise<Respo
         if (isOfficialWxPusher) {
             return badRequest('使用 WxPusher 官方服务需要配置 AppToken。建议使用自建的 go-wxpush 服务，或在 WxPush URL 中填写您的 go-wxpush 服务地址。');
         }
-
-        // go-wxpush 服务的 /wxsend 接口
-        apiUrl += '/wxsend';
 
         // 确定推送配置优先级：
         // 1. 邮件设置中的 push_config
@@ -395,58 +384,28 @@ export async function testEmailForward(env: Env, userKey: string): Promise<Respo
             }
         }
 
-        requestBody = {
-            title: 'NeverForget 测试推送',
-            content: '🎉 邮件转发测试成功！\n\n您的邮件转发功能已正确配置，当有邮件发送到您的专属邮箱时，将自动转发到此处。\n\n专属邮箱地址：' + (settings.email_address || '尚未分配'),
-            appid: pushConfig.appid || '',
-            secret: pushConfig.secret || '',
-            userid: pushConfig.userid || settings.wxpush_token,
-            template_id: pushConfig.template_id || '',
-            base_url: pushServiceUrl,
-        };
-
-        // 如果配置了模板名称，添加到请求中
-        if (settings.template_name) {
-            requestBody.template_name = settings.template_name;
-        }
-
-        console.log(`[Test Email Forward] 调用推送服务: ${apiUrl}`);
-
-        const response = await fetch(apiUrl, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
+        const pushResult = await sendPush(
+            pushServiceUrl,
+            {
+                appid: pushConfig.appid || '',
+                secret: pushConfig.secret || '',
+                userid: pushConfig.userid || settings.wxpush_token,
+                template_id: pushConfig.template_id || '',
+                base_url: pushServiceUrl,
+                template_name: settings.template_name || undefined,
             },
-            body: JSON.stringify(requestBody),
-        });
+            'NeverForget 测试推送',
+            '🎉 邮件转发测试成功！\n\n您的邮件转发功能已正确配置，当有邮件发送到您的专属邮箱时，将自动转发到此处。\n\n专属邮箱地址：' + (settings.email_address || '尚未分配'),
+        );
 
-        const responseText = await response.text();
-        console.log(`[Test Email Forward] 响应: ${response.status} - ${responseText.substring(0, 200)}`);
-
-        // 尝试解析 JSON 响应
-        let result: { errcode?: number; errmsg?: string; code?: number; msg?: string } = {};
-        try {
-            result = JSON.parse(responseText);
-        } catch (e) {
-            // 非 JSON 响应
-            if (response.ok) {
-                return success({
-                    message: '测试推送已发送，请检查您的微信',
-                    email_address: settings.email_address,
-                });
-            }
-            return badRequest(`推送服务返回异常: ${responseText.substring(0, 100)}`);
-        }
-
-        if ((result.errcode === 0) || (result.code === 1000) || response.ok) {
+        if (pushResult.success) {
             return success({
                 message: '测试推送已发送，请检查您的微信',
                 email_address: settings.email_address,
             });
-        } else {
-            const errorMsg = result.errmsg || result.msg || '未知错误';
-            return badRequest(`推送失败: ${errorMsg}`);
         }
+
+        return badRequest(`推送失败: ${pushResult.error || '未知错误'}`);
     } catch (error) {
         console.error('测试邮件转发失败:', error);
         return serverError('测试邮件转发失败: ' + (error instanceof Error ? error.message : '未知错误'));

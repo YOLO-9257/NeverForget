@@ -43,3 +43,5 @@ logs/
 *.tmp
 *.temp
 .ace-tool/
+.omc/
+.serena/

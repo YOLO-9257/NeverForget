@@ -1,0 +1,77 @@
+/* ===== TaskDetail Page - CSS Module ===== */
+
+/* ===== Header Layout ===== */
+
+.headerTitleRow {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.headerActions {
+    display: flex;
+    gap: 12px;
+}
+
+/* ===== Tabs ===== */
+
+.tabsWrapper {
+    margin-bottom: 24px;
+}
+
+/* ===== Detail Values ===== */
+
+.contentValue {
+    max-width: 300px;
+    word-break: break-word;
+}
+
+.monoValue {
+    font-family: var(--font-mono);
+}
+
+/* ===== Email Sync Section ===== */
+
+.emailSyncDesc {
+    font-size: 14px;
+    color: var(--text-muted);
+}
+
+.emailLinkWrapper {
+    margin-top: 12px;
+}
+
+.emailLinkBtn {
+    padding: 4px 0;
+}
+
+/* ===== Empty States ===== */
+
+.emptyState {
+    text-align: center;
+    padding: 40px;
+    color: var(--text-muted);
+}
+
+.emptyCell {
+    text-align: center;
+    padding: 40px;
+}
+
+/* ===== Timeline ===== */
+
+.errorText {
+    color: var(--error);
+}
+
+/* ===== Log Table ===== */
+
+.logTime {
+    font-family: var(--font-mono);
+    font-size: 13px;
+}
+
+.logMessage {
+    max-width: 400px;
+    word-break: break-word;
+}

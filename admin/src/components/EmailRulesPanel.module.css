@@ -1,0 +1,110 @@
+/* EmailRulesPanel.module.css - 邮件过滤规则面板样式 */
+
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+}
+
+.tableCard {
+    padding: 0;
+    overflow: hidden;
+}
+
+.table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.tableHead {
+    background: var(--bg-surface);
+}
+
+.tableHeadRow {
+    text-align: left;
+    color: var(--text-secondary);
+}
+
+.th {
+    padding: 16px;
+    font-weight: 500;
+    font-size: 0.875rem;
+}
+
+.thActions {
+    text-align: right;
+}
+
+.td {
+    padding: 16px;
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.tdName {
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.tdActions {
+    text-align: right;
+}
+
+.emptyRow {
+    padding: 24px;
+    text-align: center;
+    color: var(--text-secondary);
+}
+
+.conditionBadge {
+    margin-right: 4px;
+    display: inline-block;
+}
+
+.statusEnabled {
+    color: var(--success);
+}
+
+.statusDisabled {
+    color: var(--text-muted);
+}
+
+/* Modal 样式增强 */
+.conditionGrid {
+    display: grid;
+    grid-template-columns: 100px 100px 1fr;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.conditionSelect {
+    padding: 8px 12px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-default);
+    background: var(--bg-base);
+    color: var(--text-primary);
+    font-size: 0.875rem;
+}
+
+.conditionSelect:focus {
+    outline: none;
+    border-color: var(--border-focus);
+}
+
+.conditionInput {
+    padding: 8px 12px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-default);
+    background: var(--bg-base);
+    color: var(--text-primary);
+    font-size: 0.875rem;
+}
+
+.conditionInput:focus {
+    outline: none;
+    border-color: var(--border-focus);
+}
+
+.conditionInput::placeholder {
+    color: var(--text-muted);
+}

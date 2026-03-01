@@ -4,6 +4,7 @@
  */
 
 import { ScheduleType } from '../types';
+import { parseExpression } from 'cron-parser';
 
 /**
  * 获取指定时区的当前时间偏移量（毫秒）
@@ -103,7 +104,8 @@ export function calculateNextTrigger(
     scheduleWeekday: number | null,
     scheduleDay: number | null,
     timezone: string = 'Asia/Shanghai',
-    baseTime?: Date
+    baseTime?: Date,
+    scheduleCron?: string | null
 ): number | null {
     const now = baseTime || new Date();
 
@@ -117,10 +119,33 @@ export function calculateNextTrigger(
         case 'monthly':
             return calculateMonthlyNextTrigger(scheduleDay!, scheduleTime!, timezone, now);
         case 'cron':
-            // Cron 表达式解析需要额外的库，这里先返回下一分钟
-            return now.getTime() + 60000;
+            return calculateCronNextTrigger(scheduleCron, timezone, now);
         default:
             return null;
+    }
+}
+
+/**
+ * Cron 任务：计算下次触发时间（支持时区与 DST）
+ */
+function calculateCronNextTrigger(
+    scheduleCron: string | null | undefined,
+    timezone: string,
+    now: Date
+): number {
+    if (!scheduleCron || !scheduleCron.trim()) {
+        return now.getTime() + 60 * 1000;
+    }
+
+    try {
+        const interval = parseExpression(scheduleCron.trim(), {
+            currentDate: now.toISOString(),
+            tz: timezone,
+        });
+        return interval.next().getTime();
+    } catch (error) {
+        console.warn(`[Time] Cron 解析失败 "${scheduleCron}", fallback +1min:`, error);
+        return now.getTime() + 60 * 1000;
     }
 }
 
@@ -263,4 +288,23 @@ export function isValidDateFormat(date: string): boolean {
     const [year, month, day] = date.split('-').map(Number);
     const d = new Date(year, month - 1, day);
     return d.getFullYear() === year && d.getMonth() === month - 1 && d.getDate() === day;
+}
+
+/**
+ * 验证 Cron 表达式（5/6段都支持）
+ */
+export function isValidCronExpression(expression: string): boolean {
+    const cron = expression?.trim();
+    if (!cron) {
+        return false;
+    }
+
+    try {
+        parseExpression(cron, {
+            currentDate: new Date().toISOString(),
+        });
+        return true;
+    } catch {
+        return false;
+    }
 }

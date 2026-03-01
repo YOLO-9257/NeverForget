@@ -2,10 +2,12 @@
  * 提醒任务 CRUD 处理器
  */
 
-import { Env, CreateReminderRequest, UpdateReminderRequest, Reminder, ReminderListItem, PushConfig } from '../types';
+import { Env, CreateReminderRequest, UpdateReminderRequest, Reminder, PushConfig } from '../types';
 import { success, badRequest, notFound, serverError } from '../utils/response';
 import { generateId } from '../utils/auth';
-import { calculateNextTrigger, formatTimestamp, isValidTimeFormat, isValidDateFormat } from '../utils/time';
+import { calculateNextTrigger, formatTimestamp, isValidTimeFormat, isValidDateFormat, isValidCronExpression } from '../utils/time';
+import { ensureAiActionLogsTable } from '../services/aiActionLogger';
+import { ensureRemindersSchema } from '../services/reminderSchema';
 
 /**
  * 创建提醒
@@ -16,6 +18,11 @@ export async function createReminder(
     userKey: string
 ): Promise<Response> {
     try {
+        const schemaReady = await ensureRemindersSchema(env);
+        if (!schemaReady) {
+            console.warn('[Reminder] reminders 表结构自愈失败，继续尝试创建任务');
+        }
+
         const body = await request.json() as CreateReminderRequest;
 
         // 参数验证
@@ -34,7 +41,9 @@ export async function createReminder(
             body.schedule_date || null,
             body.schedule_weekday ?? null,
             body.schedule_day ?? null,
-            body.timezone || env.TIMEZONE
+            body.timezone || env.TIMEZONE,
+            undefined,
+            body.schedule_cron || null
         );
 
         // 一次性任务如果时间已过，拒绝创建
@@ -70,7 +79,6 @@ export async function createReminder(
             body.template_name || null,
             body.type || 'reminder',
             nextTrigger,
-            0,
             body.ack_required ? 1 : 0,
             body.retry_interval ?? 30,  // 默认 30 分钟
             now,
@@ -100,8 +108,22 @@ export async function listReminders(
         const url = new URL(request.url);
         const status = url.searchParams.get('status'); // 可选：按状态筛选
         const type = url.searchParams.get('type'); // 可选：按类型筛选 (reminder | email_sync)
+        const keyword = url.searchParams.get('keyword')?.trim(); // 可选：按标题/内容搜索
+        const sortByRaw = url.searchParams.get('sort_by') || 'created_at';
+        const sortOrderRaw = (url.searchParams.get('sort_order') || 'desc').toLowerCase();
         const limit = Math.min(parseInt(url.searchParams.get('limit') || '50'), 100);
         const offset = parseInt(url.searchParams.get('offset') || '0');
+        const sortOrder = sortOrderRaw === 'asc' ? 'ASC' : 'DESC';
+
+        const sortByMap: Record<string, string> = {
+            created_at: 'created_at',
+            updated_at: 'updated_at',
+            next_trigger_at: 'next_trigger_at',
+            trigger_count: 'trigger_count',
+            title: 'title',
+            status: 'status',
+        };
+        const sortBy = sortByMap[sortByRaw] || 'created_at';
 
         let query = `SELECT * FROM reminders WHERE user_key = ?`;
         const params: any[] = [userKey];
@@ -116,7 +138,17 @@ export async function listReminders(
             params.push(type);
         }
 
-        query += ` ORDER BY created_at DESC LIMIT ? OFFSET ?`;
+        if (keyword) {
+            query += ` AND (title LIKE ? OR content LIKE ?)`;
+            params.push(`%${keyword}%`, `%${keyword}%`);
+        }
+
+        if (sortBy === 'next_trigger_at') {
+            query += ` ORDER BY (next_trigger_at IS NULL) ASC, next_trigger_at ${sortOrder}`;
+        } else {
+            query += ` ORDER BY ${sortBy} ${sortOrder}`;
+        }
+        query += ` LIMIT ? OFFSET ?`;
         params.push(limit, offset);
 
         const result = await env.DB.prepare(query).bind(...params).all<Reminder>();
@@ -132,19 +164,35 @@ export async function listReminders(
             countQuery += ` AND type = ?`;
             countParams.push(type);
         }
+        if (keyword) {
+            countQuery += ` AND (title LIKE ? OR content LIKE ?)`;
+            countParams.push(`%${keyword}%`, `%${keyword}%`);
+        }
         const countResult = await env.DB.prepare(countQuery).bind(...countParams).first<{ total: number }>();
 
-        const items: ReminderListItem[] = (result.results || []).map(r => ({
+        const items = (result.results || []).map(r => ({
             id: r.id,
             title: r.title,
             content: r.content,
+            type: r.type || 'reminder',
+            related_id: r.related_id || null,
             schedule_type: r.schedule_type,
             schedule_time: r.schedule_time,
             schedule_cron: r.schedule_cron,
+            schedule_date: r.schedule_date,
+            schedule_weekday: r.schedule_weekday,
+            schedule_day: r.schedule_day,
+            timezone: r.timezone,
+            next_trigger_at: r.next_trigger_at,
+            last_trigger_at: r.last_trigger_at,
             next_trigger: formatTimestamp(r.next_trigger_at),
             status: r.status,
             trigger_count: r.trigger_count,
-            created_at: new Date(r.created_at).toISOString(),
+            ack_required: !!r.ack_required,
+            ack_status: r.ack_status || 'none',
+            retry_interval: r.retry_interval || 30,
+            created_at: r.created_at,
+            updated_at: r.updated_at,
         }));
 
         return success({
@@ -220,6 +268,15 @@ export async function updateReminder(
         const updates: string[] = [];
         const values: any[] = [];
 
+        const scheduleChanged =
+            body.schedule_type !== undefined ||
+            body.schedule_time !== undefined ||
+            body.schedule_cron !== undefined ||
+            body.schedule_date !== undefined ||
+            body.schedule_weekday !== undefined ||
+            body.schedule_day !== undefined ||
+            body.timezone !== undefined;
+
         // 动态构建更新语句
         if (body.title !== undefined) {
             updates.push('title = ?');
@@ -230,8 +287,19 @@ export async function updateReminder(
             values.push(body.content);
         }
         if (body.status !== undefined) {
+            if (!['active', 'paused'].includes(body.status)) {
+                return badRequest('状态仅支持 active 或 paused');
+            }
             updates.push('status = ?');
             values.push(body.status);
+        }
+        if (body.schedule_type !== undefined) {
+            const validTypes = ['once', 'daily', 'weekly', 'monthly', 'cron'];
+            if (!validTypes.includes(body.schedule_type)) {
+                return badRequest(`无效的调度类型，支持: ${validTypes.join(', ')}`);
+            }
+            updates.push('schedule_type = ?');
+            values.push(body.schedule_type);
         }
         if (body.schedule_time !== undefined) {
             if (!isValidTimeFormat(body.schedule_time)) {
@@ -239,6 +307,44 @@ export async function updateReminder(
             }
             updates.push('schedule_time = ?');
             values.push(body.schedule_time);
+        }
+        if (body.schedule_cron !== undefined) {
+            if (!body.schedule_cron.trim()) {
+                return badRequest('Cron 表达式不能为空');
+            }
+            if (!isValidCronExpression(body.schedule_cron)) {
+                return badRequest('Cron 表达式无效');
+            }
+            updates.push('schedule_cron = ?');
+            values.push(body.schedule_cron.trim());
+        }
+        if (body.schedule_date !== undefined) {
+            if (!isValidDateFormat(body.schedule_date)) {
+                return badRequest('日期格式无效，应为 YYYY-MM-DD');
+            }
+            updates.push('schedule_date = ?');
+            values.push(body.schedule_date);
+        }
+        if (body.schedule_weekday !== undefined) {
+            if (body.schedule_weekday < 0 || body.schedule_weekday > 6) {
+                return badRequest('周几应为 0-6');
+            }
+            updates.push('schedule_weekday = ?');
+            values.push(body.schedule_weekday);
+        }
+        if (body.schedule_day !== undefined) {
+            if (body.schedule_day < 1 || body.schedule_day > 31) {
+                return badRequest('日期应为 1-31');
+            }
+            updates.push('schedule_day = ?');
+            values.push(body.schedule_day);
+        }
+        if (body.timezone !== undefined) {
+            if (!body.timezone.trim()) {
+                return badRequest('时区不能为空');
+            }
+            updates.push('timezone = ?');
+            values.push(body.timezone.trim());
         }
         if (body.push_config !== undefined) {
             // 如果前端传来的 secret 是脱敏值 "******"，则保留数据库原有的 secret
@@ -266,6 +372,9 @@ export async function updateReminder(
             values.push(body.ack_required ? 1 : 0);
         }
         if (body.retry_interval !== undefined) {
+            if (body.retry_interval < 1) {
+                return badRequest('retry_interval 需大于 0');
+            }
             updates.push('retry_interval = ?');
             values.push(body.retry_interval);
         }
@@ -281,18 +390,59 @@ export async function updateReminder(
         updates.push('updated_at = ?');
         values.push(now);
 
-        // 如果调度相关字段有变更，重新计算下次触发时间
-        if (body.schedule_time || body.schedule_type) {
-            const newType = body.schedule_type || existing.schedule_type;
-            const newTime = body.schedule_time || existing.schedule_time;
-            const newDate = body.schedule_date || existing.schedule_date;
-            const newWeekday = body.schedule_weekday ?? existing.schedule_weekday;
-            const newDay = body.schedule_day ?? existing.schedule_day;
-            const newTz = body.timezone || existing.timezone;
+        // 如果调度相关字段有变更，校验并重新计算下次触发时间
+        if (scheduleChanged) {
+            const mergedType = body.schedule_type ?? existing.schedule_type;
+            const mergedTime = body.schedule_time ?? existing.schedule_time;
+            const mergedDate = body.schedule_date ?? existing.schedule_date;
+            const mergedWeekday = body.schedule_weekday ?? existing.schedule_weekday;
+            const mergedDay = body.schedule_day ?? existing.schedule_day;
+            const mergedCron = body.schedule_cron ?? existing.schedule_cron;
+            const mergedTimezone = body.timezone ?? existing.timezone;
 
-            const nextTrigger = calculateNextTrigger(newType, newTime, newDate, newWeekday, newDay, newTz);
+            switch (mergedType) {
+                case 'once':
+                    if (!mergedDate || !mergedTime) {
+                        return badRequest('一次性提醒需要 schedule_date 和 schedule_time');
+                    }
+                    break;
+                case 'daily':
+                    if (!mergedTime) {
+                        return badRequest('每日提醒需要 schedule_time');
+                    }
+                    break;
+                case 'weekly':
+                    if (mergedWeekday === null || mergedWeekday === undefined || !mergedTime) {
+                        return badRequest('每周提醒需要 schedule_weekday 和 schedule_time');
+                    }
+                    break;
+                case 'monthly':
+                    if (mergedDay === null || mergedDay === undefined || !mergedTime) {
+                        return badRequest('每月提醒需要 schedule_day 和 schedule_time');
+                    }
+                    break;
+                case 'cron':
+                    if (!mergedCron) {
+                        return badRequest('Cron 提醒需要 schedule_cron');
+                    }
+                    if (!isValidCronExpression(mergedCron)) {
+                        return badRequest('Cron 表达式无效');
+                    }
+                    break;
+            }
 
-            if (newType === 'once' && nextTrigger === null) {
+            const nextTrigger = calculateNextTrigger(
+                mergedType,
+                mergedTime,
+                mergedDate,
+                mergedWeekday,
+                mergedDay,
+                mergedTimezone,
+                undefined,
+                mergedCron
+            );
+
+            if (mergedType === 'once' && nextTrigger === null) {
                 return badRequest('指定的时间已过');
             }
 
@@ -391,25 +541,177 @@ export async function getReminderLogs(
         const limit = Math.min(parseInt(url.searchParams.get('limit') || '20'), 100);
         const type = url.searchParams.get('type'); // 可选：按类型筛选 (reminder | email)
 
-        let query = `SELECT * FROM trigger_logs WHERE reminder_id = ?`;
-        const params: any[] = [id];
+        const toIso = (value: unknown): string => {
+            const numeric = typeof value === 'number' ? value : Number(value);
+            const date = Number.isFinite(numeric) ? new Date(numeric) : new Date(String(value ?? ''));
+            return Number.isNaN(date.getTime()) ? new Date(0).toISOString() : date.toISOString();
+        };
 
-        if (type) {
-            query += ` AND type = ?`;
-            params.push(type);
+        const aiLogsReady = await ensureAiActionLogsTable(env);
+
+        // 优先读取三层日志明细（新模型），不可用时回退旧表
+        let useNewModel = false;
+        try {
+            const detailCheck = await env.DB.prepare(`
+                SELECT COUNT(*) as cnt
+                FROM task_exec_detail
+                WHERE reminder_id = ? AND user_key = ?
+                LIMIT 1
+            `).bind(id, userKey).first<{ cnt: number }>();
+            if (detailCheck && detailCheck.cnt > 0) {
+                useNewModel = true;
+            }
+        } catch {
+            useNewModel = false;
         }
 
-        query += ` ORDER BY triggered_at DESC LIMIT ?`;
-        params.push(limit);
+        if (useNewModel) {
+            let newQuery = `
+                SELECT * FROM (
+                    SELECT
+                        d.id AS id,
+                        d.reminder_id AS reminder_id,
+                        d.triggered_at AS triggered_at,
+                        d.status AS status,
+                        d.response AS response,
+                        d.error AS error,
+                        d.duration_ms AS duration_ms,
+                        d.detail_reason AS detail_reason,
+                        'scheduler' AS source,
+                        NULL AS action
+                    FROM task_exec_detail d
+                    WHERE d.reminder_id = ?
+                      AND d.user_key = ?
+                      ${type ? `AND d.task_type = ?` : ''}
+            `;
 
-        const result = await env.DB.prepare(query).bind(...params).all();
+            if (aiLogsReady) {
+                newQuery += `
+                    UNION ALL
 
-        const logs = (result.results || []).map((log: any) => ({
+                    SELECT
+                        a.id AS id,
+                        a.reminder_id AS reminder_id,
+                        a.triggered_at AS triggered_at,
+                        a.status AS status,
+                        a.response AS response,
+                        a.error AS error,
+                        a.duration_ms AS duration_ms,
+                        NULL AS detail_reason,
+                        'ai_butler' AS source,
+                        a.action AS action
+                    FROM ai_action_logs a
+                    WHERE a.reminder_id = ?
+                      AND a.user_key = ?
+                      ${type ? `AND COALESCE(a.reminder_type, 'reminder') = ?` : ''}
+                `;
+            }
+
+            newQuery += `
+                ) all_logs
+                ORDER BY triggered_at DESC
+                LIMIT ?
+            `;
+
+            const newParams: unknown[] = [id, userKey];
+            if (type) newParams.push(type);
+            if (aiLogsReady) {
+                newParams.push(id, userKey);
+                if (type) newParams.push(type);
+            }
+            newParams.push(limit);
+
+            const newResult = await env.DB.prepare(newQuery).bind(...newParams).all();
+            const newLogs = (newResult.results || []).map((log: any) => ({
+                ...log,
+                triggered_at: toIso(log.triggered_at),
+            }));
+
+            return success({ logs: newLogs });
+        }
+
+        if (!aiLogsReady) {
+            let legacyQuery = `
+                SELECT l.*
+                FROM trigger_logs l
+                INNER JOIN reminders r ON l.reminder_id = r.id
+                WHERE l.reminder_id = ?
+                  AND r.user_key = ?
+            `;
+            const legacyParams: unknown[] = [id, userKey];
+            if (type) {
+                legacyQuery += ` AND r.type = ?`;
+                legacyParams.push(type);
+            }
+            legacyQuery += ` ORDER BY l.triggered_at DESC LIMIT ?`;
+            legacyParams.push(limit);
+
+            const legacyResult = await env.DB.prepare(legacyQuery).bind(...legacyParams).all();
+            const legacyLogs = (legacyResult.results || []).map((log: any) => ({
+                ...log,
+                source: 'scheduler',
+                action: null,
+                triggered_at: toIso(log.triggered_at),
+            }));
+
+            return success({ logs: legacyLogs });
+        }
+
+        const legacyQuery = `
+            SELECT * FROM (
+                SELECT
+                    l.id AS id,
+                    l.reminder_id AS reminder_id,
+                    l.triggered_at AS triggered_at,
+                    l.status AS status,
+                    l.response AS response,
+                    l.error AS error,
+                    l.duration_ms AS duration_ms,
+                    NULL AS detail_reason,
+                    'scheduler' AS source,
+                    NULL AS action
+                FROM trigger_logs l
+                INNER JOIN reminders r ON l.reminder_id = r.id
+                WHERE l.reminder_id = ?
+                  AND r.user_key = ?
+                  ${type ? `AND r.type = ?` : ''}
+
+                UNION ALL
+
+                SELECT
+                    a.id AS id,
+                    a.reminder_id AS reminder_id,
+                    a.triggered_at AS triggered_at,
+                    a.status AS status,
+                    a.response AS response,
+                    a.error AS error,
+                    a.duration_ms AS duration_ms,
+                    NULL AS detail_reason,
+                    'ai_butler' AS source,
+                    a.action AS action
+                FROM ai_action_logs a
+                WHERE a.reminder_id = ?
+                  AND a.user_key = ?
+                  ${type ? `AND COALESCE(a.reminder_type, 'reminder') = ?` : ''}
+            ) all_logs
+            ORDER BY triggered_at DESC
+            LIMIT ?
+        `;
+
+        const legacyParams: unknown[] = [id, userKey];
+        if (type) legacyParams.push(type);
+        legacyParams.push(id, userKey);
+        if (type) legacyParams.push(type);
+        legacyParams.push(limit);
+
+        const legacyResult = await env.DB.prepare(legacyQuery).bind(...legacyParams).all();
+
+        const legacyLogs = (legacyResult.results || []).map((log: any) => ({
             ...log,
-            triggered_at: new Date(log.triggered_at).toISOString(),
+            triggered_at: toIso(log.triggered_at),
         }));
 
-        return success({ logs });
+        return success({ logs: legacyLogs });
     } catch (error) {
         console.error('获取执行日志失败:', error);
         return serverError('获取执行日志失败');
@@ -481,6 +783,9 @@ function validateCreateRequest(body: CreateReminderRequest): string | null {
         case 'cron':
             if (!body.schedule_cron) {
                 return 'Cron 类型提醒需要指定 Cron 表达式 (schedule_cron)';
+            }
+            if (!isValidCronExpression(body.schedule_cron)) {
+                return 'Cron 表达式无效';
             }
             break;
     }
@@ -563,7 +868,8 @@ export async function ackReminder(
             reminder.schedule_weekday,
             reminder.schedule_day,
             reminder.timezone,
-            new Date(now) // 基于当前时间计算下一次
+            new Date(now), // 基于当前时间计算下一次
+            reminder.schedule_cron
         );
 
         if (nextTrigger) {

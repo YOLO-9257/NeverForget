@@ -81,7 +81,7 @@ export function parseNaturalLanguage(input: string): NlpParseResult {
  */
 function parseChineseInput(input: string): NlpParseResult {
     const result: NlpParseResult = { success: false, confidence: 0, rawInput: input };
-    let processedInput = input;
+    const processedInput = input;
 
     // 提取任务内容（更宽容的模式，支持时间在前后两种情况）
     // 模式 A: [提醒我] 内容 [明天/下午/...]
@@ -455,10 +455,11 @@ export function getScheduleDescription(result: NlpParseResult): string {
         case 'daily':
             parts.push('每天');
             break;
-        case 'weekly':
+        case 'weekly': {
             const weekdayNames = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
             parts.push(`每${weekdayNames[result.schedule_weekday ?? 0]}`);
             break;
+        }
         case 'monthly':
             parts.push(`每月 ${result.schedule_day} 号`);
             break;

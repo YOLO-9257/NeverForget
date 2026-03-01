@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { authApi, getApiBaseUrl } from '../api';
+import styles from './Login.module.css';
 
 interface LoginProps {
     onLogin: () => void;
@@ -41,7 +42,7 @@ export function Login({ onLogin }: LoginProps) {
             const { initialized } = await authApi.checkInitStatus(url);
             setIsSetupMode(!initialized);
             // 这里不再从 API 获取用户名，改为依赖本地缓存
-        } catch (e) {
+        } catch {
             setIsSetupMode(false);
         } finally {
             setCheckingInit(false);
@@ -91,8 +92,8 @@ export function Login({ onLogin }: LoginProps) {
                 localStorage.setItem('last_username', username);
                 onLogin();
             }
-        } catch (err: any) {
-            setError(err.message || '操作失败，请检查网络或账号密码');
+        } catch (err) {
+            setError(err instanceof Error ? err.message : '操作失败，请检查网络或账号密码');
         } finally {
             setLoading(false);
         }
@@ -144,30 +145,20 @@ export function Login({ onLogin }: LoginProps) {
                     </div>
 
                     {error && (
-                        <div
-                            style={{
-                                padding: '12px 16px',
-                                borderRadius: 'var(--radius-md)',
-                                marginBottom: '20px',
-                                background: 'hsla(0, 75%, 55%, 0.15)',
-                                border: '1px solid var(--error)',
-                                color: 'var(--error)',
-                                fontSize: '14px',
-                            }}
-                        >
+                        <div className={styles.errorAlert}>
                             {error}
                         </div>
                     )}
 
-                    <div style={{ marginBottom: '16px' }}>
+                    <div className={styles.statusHint}>
                         {checkingInit ? (
-                            <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>正在连接检测...</span>
+                            <span className={styles.checkingText}>正在连接检测...</span>
                         ) : savedUsername ? (
-                            <div style={{ fontSize: '12px', color: 'var(--success)', marginBottom: '8px' }}>
+                            <div className={styles.welcomeText}>
                                 👋 欢迎回来，管理员 <b>{savedUsername}</b>
                             </div>
                         ) : isSetupMode ? (
-                            <div style={{ fontSize: '12px', color: 'var(--primary)', marginBottom: '8px' }}>
+                            <div className={styles.setupText}>
                                 🎉 检测到全新系统，将为您创建管理员账户
                             </div>
                         ) : null}
@@ -175,8 +166,7 @@ export function Login({ onLogin }: LoginProps) {
 
                     <button
                         type="submit"
-                        className="btn btn-primary btn-lg"
-                        style={{ width: '100%', marginBottom: '12px' }}
+                        className={`btn btn-primary btn-lg ${styles.submitButton}`}
                         disabled={loading || checkingInit}
                     >
                         {loading ? '处理中...' : (isSetupMode ? '🚀 初始化并登录' : '🔐 登录')}
@@ -185,23 +175,14 @@ export function Login({ onLogin }: LoginProps) {
 
                 </form>
 
-                <div
-                    style={{
-                        marginTop: '24px',
-                        paddingTop: '24px',
-                        borderTop: '1px solid var(--border)',
-                        fontSize: '13px',
-                        color: 'var(--text-muted)',
-                        textAlign: 'center',
-                    }}
-                >
+                <div className={styles.footer}>
                     <p>第一次使用？请先部署 NeverForget Workers</p>
-                    <p style={{ marginTop: '8px' }}>
+                    <p>
                         <a
                             href="https://github.com/YOLO-9257/NeverForget"
                             target="_blank"
                             rel="noopener noreferrer"
-                            style={{ color: 'var(--primary-light)' }}
+                            className={styles.footerLink}
                         >
                             查看部署指南 →
                         </a>

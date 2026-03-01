@@ -3,9 +3,74 @@
  * @author zhangws
  */
 
-import { Env, EmailSettings, ForwardRules, EmailData, PushConfig, AiMessage } from '../types';
+import { Env, EmailSettings, ForwardRules, EmailData, PushConfig, EmailRuleCondition, EmailRuleAction, AiFilterConfig } from '../types';
 import { sendPush } from './pusher';
+import { resolvePushApiUrl } from './pusher';
 import { callLlmInWorker } from '../utils/aiClient';
+import { AiRuntimeConfig, PushSummaryContext, extractContentSmart, buildSummaryBlock, getQuickSummary, resolveAiProvider } from './emailContent';
+
+interface CustomEmailRule {
+    name?: string;
+    conditions: EmailRuleCondition[];
+    action: EmailRuleAction;
+}
+
+interface ForwardDecision {
+    allowed: boolean;
+    reason?: string;
+    action?: EmailRuleAction;
+}
+
+interface LegacyWxpusherResponse {
+    code?: number;
+    msg?: string;
+    [key: string]: unknown;
+}
+
+interface ProxyPushResponse {
+    errmsg?: string;
+    msg?: string;
+    [key: string]: unknown;
+}
+
+type AiEmailCategory = 'ads' | 'notification' | 'other';
+type AiSeverity = 'critical' | 'high' | 'medium' | 'low';
+
+interface AiFilterRawResult {
+    isSpam?: unknown;
+    reason?: unknown;
+    category?: unknown;
+    severity?: unknown;
+    importance_score?: unknown;
+}
+
+interface AiFilterDecisionInput {
+    category: AiEmailCategory;
+    severity: AiSeverity;
+    importanceScore: number;
+    spamHint: boolean;
+    adsKeepImportanceThreshold?: number;
+}
+
+export interface AiSpamCheckResult {
+    isSpam: boolean;
+    shouldFilter: boolean;
+    reason?: string;
+    category: AiEmailCategory;
+    severity: AiSeverity;
+}
+
+const AD_KEYWORDS = [
+    '广告', '促销', '优惠', '折扣', '限时', '领券', '抽奖', '返现',
+    'sale', 'discount', 'coupon', 'promo', 'promotion', 'marketing', 'newsletter', 'unsubscribe'
+];
+const NOTIFICATION_KEYWORDS = [
+    '通知', '提醒', '验证码', '校验码', '账单', '发票', '收据', '订单', '物流', '到期', '告警', '预警',
+    'verification code', 'otp', 'security alert', 'invoice', 'receipt', 'order', 'shipment', 'delivery', 'payment'
+];
+const DEFAULT_ADS_KEEP_IMPORTANCE_THRESHOLD = 0.75;
+
+export type { PushSummaryContext } from './emailContent';
 
 /**
  * 检查邮件是否满足转发规则
@@ -15,8 +80,8 @@ export function shouldForwardEmail(
     data: EmailData,
     rules: ForwardRules,
     blacklist: Set<string> = new Set(),
-    customRules: any[] = []
-): { allowed: boolean; reason?: string; action?: any } {
+    customRules: CustomEmailRule[] = []
+): ForwardDecision {
     const { from, subject, content } = data;
 
     // 0. 数据库全局/账户黑名单检查 (优先级最高)
@@ -33,13 +98,14 @@ export function shouldForwardEmail(
     // customRules structure: { conditions: EmailRuleCondition[], action: EmailRuleAction }
     for (const rule of customRules) {
         if (evaluateRule(data, rule.conditions)) {
-            console.log(`[Email Service] 邮件匹配规则 "${rule.name}": ${rule.action.type}`);
+            const ruleName = rule.name || 'unnamed_rule';
+            console.log(`[Email Service] 邮件匹配规则 "${ruleName}": ${rule.action.type}`);
 
             if (rule.action.type === 'block' || rule.action.type === 'skip_push') {
-                return { allowed: false, reason: rule.name, action: rule.action };
+                return { allowed: false, reason: ruleName, action: rule.action };
             }
             if (rule.action.type === 'mark_spam') {
-                return { allowed: false, reason: rule.name, action: rule.action }; // Or maybe allow but tag? For now block push.
+                return { allowed: false, reason: ruleName, action: rule.action }; // Or maybe allow but tag? For now block push.
             }
             // If action is 'ai_review', we might let it pass here and handle async later, 
             // or return a special status. For now assuming sync checks return decision.
@@ -86,7 +152,7 @@ export function shouldForwardEmail(
 /**
  * 评估单条规则
  */
-function evaluateRule(email: EmailData, conditions: any[]): boolean {
+function evaluateRule(email: EmailData, conditions: EmailRuleCondition[]): boolean {
     if (!conditions || conditions.length === 0) return false;
 
     // 目前假设所有条件为 AND 关系 (后续可扩展 OR)
@@ -111,29 +177,201 @@ function evaluateRule(email: EmailData, conditions: any[]): boolean {
 }
 
 /**
- * AI 垃圾邮件检测
+ * 统一分值规范到 0~1
  */
-export async function checkAiSpam(env: Env, email: EmailData, aiConfig?: { apiKey?: string; provider?: string; model?: string; baseUrl?: string }): Promise<{ isSpam: boolean; reason?: string }> {
-    // 优先使用传入的 config，否则使用 env
-    const apiKey = aiConfig?.apiKey || env.AI_API_KEY;
-    if (!apiKey) return { isSpam: false };
+function clampScore(value: unknown, fallback: number = 0.5): number {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        return Math.min(1, Math.max(0, value));
+    }
+    return fallback;
+}
+
+/**
+ * 将 AI 分类结果规范化为系统可识别的类别
+ */
+function normalizeAiCategory(value: unknown): AiEmailCategory {
+    const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+    if (!normalized) return 'other';
+
+    if (['ads', 'ad', 'advertisement', 'advertising', 'promotion', 'promo', 'marketing', 'newsletter', 'spam'].includes(normalized)) {
+        return 'ads';
+    }
+
+    if (['notification', 'notice', 'transaction', 'transactional', 'bill', 'billing', 'invoice', 'receipt', 'verification', 'otp', 'alert', 'system'].includes(normalized)) {
+        return 'notification';
+    }
+
+    return 'other';
+}
+
+/**
+ * 将 AI 严重程度规范化
+ */
+function normalizeAiSeverity(
+    value: unknown,
+    fallbackSentiment?: PushSummaryContext['sentiment'],
+    fallbackImportance?: number
+): AiSeverity {
+    const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+
+    if (normalized === 'critical') return 'critical';
+    if (['high', 'urgent', 'severe'].includes(normalized)) return 'high';
+    if (['medium', 'normal', 'moderate'].includes(normalized)) return 'medium';
+    if (['low', 'minor'].includes(normalized)) return 'low';
+
+    if (fallbackSentiment === 'urgent') return 'high';
+    if (fallbackSentiment === 'low') return 'low';
+
+    const importance = clampScore(fallbackImportance);
+    if (importance >= 0.75) return 'high';
+    if (importance <= 0.3) return 'low';
+    return 'medium';
+}
+
+/**
+ * AI 输出异常时，基于关键词做一个保守的类别兜底
+ */
+function inferCategoryByHeuristics(email: EmailData): AiEmailCategory {
+    const content = `${email.subject || ''}\n${email.content || ''}`.toLowerCase();
+    const hasAd = AD_KEYWORDS.some(keyword => content.includes(keyword));
+    const hasNotification = NOTIFICATION_KEYWORDS.some(keyword => content.includes(keyword));
+
+    if (hasNotification && !hasAd) return 'notification';
+    if (hasAd && !hasNotification) return 'ads';
+    if (hasNotification && hasAd) {
+        // 同时命中时优先通知，避免误杀验证码/账单提醒。
+        return 'notification';
+    }
+    return 'other';
+}
+
+/**
+ * 解析 LLM 返回的 JSON
+ */
+function parseAiFilterRawResult(text: string): AiFilterRawResult | null {
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return null;
 
     try {
-        const systemPrompt = `You are a strict spam filter. Analyze the following email and determine if it is SPAM, PROMOTION using aggressive filtering. 
-        Focus on: phishing, lottery scams, unsolicited marketing, malicious links, or generic bulk spam.
-        Ignore personal emails, work emails, or transactional emails (verifications, receipts).
-        
-        Respond with a JSON object: { "isSpam": boolean, "reason": "short explanation" }`;
+        const parsed = JSON.parse(jsonMatch[0]);
+        if (parsed && typeof parsed === 'object') {
+            return parsed as AiFilterRawResult;
+        }
+    } catch {
+        // ignore parse errors
+    }
+    return null;
+}
+
+/**
+ * AI 自动过滤决策：
+ * - 广告邮件：以过滤为主，但给高重要度留兜底
+ * - 通知邮件：以保留为主，仅在低严重度且疑似垃圾时过滤
+ * - 其他类型：结合严重度、垃圾提示和重要度判定
+ */
+export function decideAiFilterAction(input: AiFilterDecisionInput): { shouldFilter: boolean; reason: string } {
+    const importance = clampScore(input.importanceScore);
+    const adsKeepImportanceThreshold = clampScore(
+        input.adsKeepImportanceThreshold,
+        DEFAULT_ADS_KEEP_IMPORTANCE_THRESHOLD
+    );
+    const adsStrongKeepThreshold = Math.min(1, adsKeepImportanceThreshold + 0.15);
+
+    if (input.category === 'ads') {
+        if (input.severity === 'critical' || input.severity === 'high') {
+            return { shouldFilter: true, reason: '广告邮件且严重度高' };
+        }
+        if (input.severity === 'medium') {
+            if (importance >= adsKeepImportanceThreshold) {
+                return {
+                    shouldFilter: false,
+                    reason: `广告邮件但重要度较高（阈值 ${adsKeepImportanceThreshold.toFixed(2)}），保留`
+                };
+            }
+            return { shouldFilter: true, reason: '广告邮件且中等严重度' };
+        }
+        if (importance >= adsStrongKeepThreshold) {
+            return { shouldFilter: false, reason: '广告邮件但重要度极高，保留' };
+        }
+        return { shouldFilter: true, reason: '广告邮件且低严重度' };
+    }
+
+    if (input.category === 'notification') {
+        if (input.severity === 'low' && importance < 0.2 && input.spamHint) {
+            return { shouldFilter: true, reason: '通知邮件低严重度且疑似垃圾' };
+        }
+        return { shouldFilter: false, reason: '通知邮件默认保留' };
+    }
+
+    if (input.spamHint && (input.severity === 'critical' || input.severity === 'high')) {
+        return { shouldFilter: true, reason: '高严重度且疑似垃圾' };
+    }
+    if (input.spamHint && input.severity === 'medium' && importance < 0.35) {
+        return { shouldFilter: true, reason: '中等严重度且重要度较低' };
+    }
+    return { shouldFilter: false, reason: '非广告邮件或重要度较高' };
+}
+
+/**
+ * AI 自动过滤判定
+ */
+export async function checkAiSpam(
+    env: Env,
+    email: EmailData,
+    aiConfig?: AiRuntimeConfig,
+    summaryContext?: PushSummaryContext,
+    aiFilterConfig?: AiFilterConfig
+): Promise<AiSpamCheckResult> {
+    const defaultCategory = inferCategoryByHeuristics(email);
+    const defaultImportance = clampScore(summaryContext?.importance_score);
+    const defaultSeverity = normalizeAiSeverity(undefined, summaryContext?.sentiment, defaultImportance);
+    const adsKeepImportanceThreshold = clampScore(
+        aiFilterConfig?.ads_keep_importance_threshold,
+        DEFAULT_ADS_KEEP_IMPORTANCE_THRESHOLD
+    );
+
+    // 优先使用传入的 config，否则使用 env
+    const apiKey = aiConfig?.apiKey || env.AI_API_KEY;
+    if (!apiKey) {
+        return {
+            isSpam: false,
+            shouldFilter: false,
+            reason: '未配置 AI 过滤',
+            category: defaultCategory,
+            severity: defaultSeverity
+        };
+    }
+
+    try {
+        const systemPrompt = `You are an email filtering engine.
+Classify this email and return strict JSON only:
+{
+  "category": "ads|notification|other",
+  "severity": "critical|high|medium|low",
+  "isSpam": true|false,
+  "reason": "short explanation",
+  "importance_score": 0.0
+}
+
+Rules:
+- "notification" includes transactional/account/system notices: OTP, verification, bills, receipts, logistics, security alerts.
+- "ads" includes promotions, marketing campaigns, newsletters, unsolicited bulk messages.
+- Use severity to represent harmfulness/noise impact, not urgency alone.
+- Do not classify a clear transactional notification as ads.`;
+
+        const summaryMeta = summaryContext?.summary
+            ? `\nSummary: ${summaryContext.summary}\nSentiment: ${summaryContext.sentiment || 'normal'}\nImportance: ${typeof summaryContext.importance_score === 'number' ? summaryContext.importance_score.toFixed(2) : '0.50'}\nActionItems: ${(summaryContext.action_items || []).slice(0, 5).join(' | ') || 'none'}`
+            : '';
 
         const response = await callLlmInWorker(
             [
                 { role: 'system', content: systemPrompt },
-                { role: 'user', content: `From: ${email.from}\nSubject: ${email.subject}\nContent: ${email.content.substring(0, 1000)}` }
+                { role: 'user', content: `From: ${email.from}\nSubject: ${email.subject}\nContent: ${email.content.substring(0, 1000)}${summaryMeta}` }
             ],
             {
                 message: '',
                 apiKey: apiKey,
-                provider: (aiConfig?.provider as any) || env.AI_PROVIDER || 'gemini',
+                provider: resolveAiProvider(aiConfig?.provider, env.AI_PROVIDER),
                 model: aiConfig?.model || env.AI_MODEL,
                 baseUrl: aiConfig?.baseUrl
             },
@@ -141,18 +379,53 @@ export async function checkAiSpam(env: Env, email: EmailData, aiConfig?: { apiKe
         );
 
         const text = response.text.trim();
-        // Try to parse JSON
-        const jsonMatch = text.match(/\{.*\}/s);
-        if (jsonMatch) {
-            const result = JSON.parse(jsonMatch[0]);
-            return { isSpam: result.isSpam, reason: result.reason };
-        }
+        const parsed = parseAiFilterRawResult(text);
+        if (parsed) {
+            const category = normalizeAiCategory(parsed.category) || defaultCategory;
+            const llmImportance = clampScore(parsed.importance_score, defaultImportance);
+            const importanceScore = typeof summaryContext?.importance_score === 'number'
+                ? clampScore(summaryContext.importance_score)
+                : llmImportance;
+            const severity = normalizeAiSeverity(parsed.severity, summaryContext?.sentiment, importanceScore);
+            const spamHint = typeof parsed.isSpam === 'boolean'
+                ? parsed.isSpam
+                : category === 'ads';
+            const decision = decideAiFilterAction({
+                category,
+                severity,
+                importanceScore,
+                spamHint,
+                adsKeepImportanceThreshold
+            });
+            const modelReason = typeof parsed.reason === 'string' ? parsed.reason.trim() : '';
+            const reasons = [decision.reason, modelReason].filter(Boolean);
 
+            return {
+                isSpam: decision.shouldFilter,
+                shouldFilter: decision.shouldFilter,
+                reason: reasons.join('；'),
+                category,
+                severity
+            };
+        }
     } catch (e) {
         console.error('[Email Service] AI Spam check failed:', e);
     }
 
-    return { isSpam: false };
+    const fallbackDecision = decideAiFilterAction({
+        category: defaultCategory,
+        severity: defaultSeverity,
+        importanceScore: defaultImportance,
+        spamHint: defaultCategory === 'ads',
+        adsKeepImportanceThreshold
+    });
+    return {
+        isSpam: fallbackDecision.shouldFilter,
+        shouldFilter: fallbackDecision.shouldFilter,
+        reason: `AI 输出异常，使用兜底规则：${fallbackDecision.reason}`,
+        category: defaultCategory,
+        severity: defaultSeverity
+    };
 }
 
 
@@ -163,12 +436,13 @@ export async function forwardEmailToPush(
     env: Env,
     settings: EmailSettings,
     email: EmailData,
-    aiConfig?: { apiKey?: string; provider?: string; model?: string; baseUrl?: string }
+    aiConfig?: AiRuntimeConfig,
+    summaryContext?: PushSummaryContext
 ): Promise<{ success: boolean; response?: string; error?: string }> {
     const { from, subject, content } = email;
 
     // 确定推送服务地址
-    const pushServiceUrl = settings.wxpush_url || env.PUSH_SERVICE_URL || 'https://wxpusher.zjiecode.com';
+    const pushServiceUrl = (settings.wxpush_url || env.PUSH_SERVICE_URL || '').trim();
 
     // 检查是否可以使用统一的 push_config
     if (settings.push_config) {
@@ -181,9 +455,10 @@ export async function forwardEmailToPush(
             }
 
             // 构建推送内容
-            const displayContent = await extractContentSmart(env, settings, content, aiConfig);
+            const displayContent = await extractContentSmart(env, content, aiConfig);
+            const summaryBlock = buildSummaryBlock(summaryContext, displayContent);
             const pushTitle = `📧 ${subject}`;
-            const pushContent = `📧 **新邮件通知**\n\n**发件人**: ${from}\n**主题**: ${subject}\n\n---\n\n${displayContent}`;
+            const pushContent = `📧 **新邮件通知**\n\n**发件人**: ${from}\n**主题**: ${subject}\n${summaryBlock}\n\n---\n\n${displayContent}`;
 
             const result = await sendPush(pushServiceUrl, config, pushTitle, pushContent);
 
@@ -199,27 +474,30 @@ export async function forwardEmailToPush(
 
     // Legacy 模式: 直接调用 WxPusher 接口 (兼容旧配置)
     if (!settings.wxpush_token) {
-        return { success: false, error: '未配置推送 Token' };
+        return { success: false, error: '未配置可用推送地址或推送 Token' };
     }
 
     // 如果是通过 legacy 模式且地址是 wxpusher.zjiecode.com
-    if (pushServiceUrl.includes('wxpusher.zjiecode.com')) {
-        const displayContent = await extractContentSmart(env, settings, content, aiConfig);
-        const legacyContent = `📧 **新邮件通知**\n\n**发件人**: ${from}\n**主题**: ${subject}\n\n---\n\n${displayContent}`;
+    if (!pushServiceUrl || pushServiceUrl.includes('wxpusher.zjiecode.com')) {
+        const displayContent = await extractContentSmart(env, content, aiConfig);
+        const summaryBlock = buildSummaryBlock(summaryContext, displayContent);
+        const quickSummary = getQuickSummary(summaryContext, displayContent, subject);
+        const legacyContent = `📧 **新邮件通知**\n\n**发件人**: ${from}\n**主题**: ${subject}\n${summaryBlock}\n\n---\n\n${displayContent}`;
 
         try {
-            const response = await fetch(`${pushServiceUrl}/api/send/message`, {
+            const legacyUrl = (pushServiceUrl || 'https://wxpusher.zjiecode.com').replace(/\/$/, '');
+            const response = await fetch(`${legacyUrl}/api/send/message`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     content: legacyContent,
-                    summary: `📧 ${subject}`,
+                    summary: `📧 ${quickSummary}`,
                     contentType: 1,
                     uids: [settings.wxpush_token],
                 }),
             });
 
-            const result = await response.json() as { code: number; msg: string };
+            const result = await response.json() as LegacyWxpusherResponse;
             if (response.ok && result.code === 1000) {
                 return { success: true, response: JSON.stringify(result) };
             } else {
@@ -230,25 +508,27 @@ export async function forwardEmailToPush(
         }
     }
 
-    // 如果地址不是官方 WxPusher，尝试使用 /wxsend 接口 (可能是一个 go-wxpush 实例但未配置 push_config)
+    // 如果地址不是官方 WxPusher，尝试使用 /wxpush 接口 (可能是一个 go-wxpush 实例但未配置 push_config)
     try {
-        const apiUrl = pushServiceUrl.replace(/\/$/, '') + '/wxsend';
+        const apiUrl = resolvePushApiUrl(pushServiceUrl);
 
         // 尝试提取最新回复内容
-        const displayContent = await extractContentSmart(env, settings, content, aiConfig);
+        const displayContent = await extractContentSmart(env, content, aiConfig);
+        const summaryBlock = buildSummaryBlock(summaryContext, displayContent);
+        const contentWithSummary = `${summaryBlock}\n\n${displayContent}`;
 
         const response = await fetch(apiUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 title: `📧 ${subject}`,
-                content: displayContent,
+                content: contentWithSummary,
                 userid: settings.wxpush_token,
                 template_name: settings.template_name || 'email',
             }),
         });
 
-        const result = await response.json() as any;
+        const result = await response.json() as ProxyPushResponse;
         if (response.ok) {
             return { success: true, response: JSON.stringify(result) };
         } else {
@@ -257,92 +537,6 @@ export async function forwardEmailToPush(
     } catch (error) {
         return { success: false, error: String(error) };
     }
-}
-
-/**
- * 智能提取邮件内容 (优先使用 AI，失败回退到正则)
- */
-async function extractContentSmart(
-    env: Env,
-    settings: EmailSettings | null,
-    content: string,
-    aiConfig?: { apiKey?: string; provider?: string; model?: string; baseUrl?: string }
-): Promise<string> {
-    if (!content) return content;
-
-    // 优先使用用户配置的 AI，其次使用全局环境变量
-    const apiKey = aiConfig?.apiKey || env.AI_API_KEY;
-
-    // 检查是否有可用的 AI 配置
-    if (apiKey) {
-        try {
-            const systemPrompt = `You are an email formatting assistant. 
-Your task is to extract the LATEST message content from an email thread, removing all quoted replies, signatures, and headers (like "On ... wrote:").
-Return ONLY the cleaned latest message text. Do not add any explanations or markdown blocks unless necessary for the content itself.
-If the email seems to be a new message without history, return it as is.
-Keep the original language.`;
-
-            const response = await callLlmInWorker(
-                [
-                    { role: 'system', content: systemPrompt },
-                    { role: 'user', content: content }
-                ],
-                {
-                    message: '',
-                    apiKey: apiKey,
-                    provider: (aiConfig?.provider as any) || env.AI_PROVIDER || 'gemini',
-                    model: aiConfig?.model || env.AI_MODEL,
-                    baseUrl: aiConfig?.baseUrl
-                },
-                env
-            );
-
-            if (response.text && response.text.length > 0) {
-                return response.text.trim();
-            }
-        } catch (e) {
-            console.warn('[Email Service] AI 提取失败，回退到正则模式:', e);
-        }
-    }
-
-    // 回退到正则提取
-    return extractLatestEmailContent(content);
-}
-
-/**
- * 提取邮件中的最新回复内容（去除历史引用）- 正则版
- * @param content 邮件完整内容
- */
-function extractLatestEmailContent(content: string): string {
-    if (!content) return content;
-
-    // 规范化换行符
-    const text = content.replace(/\r\n/g, '\n');
-
-    // 常见的分隔符模式
-    const separators = [
-        /\nOn .+? wrote:[\s\S]*/i,            // Standard: On ... wrote:
-        /\n在 .+? 写道：[\s\S]*/,               // Chinese: 在 ... 写道：
-        /\n-{5}Original Message-{5}[\s\S]*/i, // Outlook English
-        /\n-{5}原始邮件-{5}[\s\S]*/,           // Outlook Chinese
-        /\nFrom:\s*.+?[\r\n]+Sent:\s*.+?[\r\n]+To:\s*.+?/i, // Outlook Full Header (Requires strict match to avoid false positives)
-        /\n________________________________[\s\S]*/, // Common Divider
-    ];
-
-    for (const regex of separators) {
-        const match = text.match(regex);
-        if (match && match.index !== undefined && match.index > 0) {
-            // 返回分隔符之前的内容
-            const newContent = text.substring(0, match.index).trim();
-            // 只有当提取出的内容不为空且长度合理时才采用 (防止误判导致内容丢失)
-            if (newContent && newContent.length > 0) {
-                return newContent;
-            }
-        }
-    }
-
-    // 如果未找到分隔符，返回原始内容
-    return content;
 }
 
 /**

@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { logsApi } from '../api';
 import type { TriggerLog } from '../types';
 import { format } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
+import styles from './Logs.module.css';
 
 /**
  * 执行日志页面
@@ -19,11 +20,7 @@ export function Logs() {
     const [typeFilter, setTypeFilter] = useState<string>('');
     const pageSize = 20;
 
-    useEffect(() => {
-        loadLogs();
-    }, [page, statusFilter, typeFilter]);
-
-    const loadLogs = async () => {
+    const loadLogs = useCallback(async () => {
         try {
             setLoading(true);
             setError(null);
@@ -42,7 +39,11 @@ export function Logs() {
         } finally {
             setLoading(false);
         }
-    };
+    }, [page, statusFilter, typeFilter]);
+
+    useEffect(() => {
+        void loadLogs();
+    }, [loadLogs]);
 
     const totalPages = Math.ceil(total / pageSize);
 
@@ -54,28 +55,26 @@ export function Logs() {
                     <h1 className="page-title">执行日志</h1>
                     <p className="page-subtitle">查看所有任务的执行记录</p>
                 </div>
-                <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                <div className={styles.headerActions}>
                     <select
-                        className="form-select"
+                        className={`form-select ${styles.filterSelect}`}
                         value={typeFilter}
                         onChange={(e) => {
                             setTypeFilter(e.target.value);
                             setPage(1);
                         }}
-                        style={{ width: '150px' }}
                     >
                         <option value="">全部类型</option>
                         <option value="reminder">定时任务</option>
-                        <option value="email">邮件任务</option>
+                        <option value="email_sync">邮件任务</option>
                     </select>
                     <select
-                        className="form-select"
+                        className={`form-select ${styles.filterSelect}`}
                         value={statusFilter}
                         onChange={(e) => {
                             setStatusFilter(e.target.value);
                             setPage(1);
                         }}
-                        style={{ width: '150px' }}
                     >
                         <option value="">全部状态</option>
                         <option value="success">成功</option>
@@ -116,32 +115,40 @@ export function Logs() {
                             <table className="table">
                                 <thead>
                                     <tr>
-                                        <th>执行时间</th>
-                                        <th>任务名称</th>
-                                        <th>类型</th>
-                                        <th>状态</th>
-                                        <th>耗时</th>
-                                        <th>详情</th>
+                                        <th className={styles.colTime}>执行时间</th>
+                                        <th className={styles.colName}>任务名称</th>
+                                        <th className={styles.colType}>类型</th>
+                                        <th className={styles.colStatus}>状态</th>
+                                        <th className={styles.colDuration}>耗时</th>
+                                        <th className={styles.colType}>原因</th>
+                                        <th className={styles.colDetail}>详情</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     {logs.map((log) => (
                                         <tr key={log.id}>
-                                            <td style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', whiteSpace: 'nowrap' }}>
-                                                {format(new Date(log.triggered_at), 'yyyy-MM-dd HH:mm:ss', { locale: zhCN })}
+                                            <td className={styles.monoCell}>
+                                                {format(new Date(log.triggered_at), 'MM-dd HH:mm:ss', { locale: zhCN })}
                                             </td>
                                             <td>
-                                                <Link
-                                                    to={`/tasks/${log.reminder_id}`}
-                                                    className="link"
-                                                    style={{ color: 'var(--primary)' }}
-                                                >
-                                                    {log.reminder_title || log.reminder_id}
-                                                </Link>
+                                                {log.reminder_id ? (
+                                                    <Link
+                                                        to={`/tasks/${log.reminder_id}`}
+                                                        className={styles.linkPrimary}
+                                                    >
+                                                        {log.reminder_title || log.reminder_id}
+                                                    </Link>
+                                                ) : (
+                                                    <span className={styles.mutedText}>
+                                                        {log.reminder_title || '智能管家动作'}
+                                                    </span>
+                                                )}
                                             </td>
                                             <td>
-                                                <span className={`badge ${log.reminder_type === 'email_sync' || log.type === 'email' ? 'badge-info' : ''}`}>
-                                                    {log.reminder_type === 'email_sync' || log.type === 'email' ? '📧 邮件' : '⏰ 定时'}
+                                                <span className={`badge ${log.reminder_type === 'email_sync' || log.type === 'email_sync' ? 'badge-info' : ''}`}>
+                                                    {log.source === 'ai_butler'
+                                                        ? '🤖 管家'
+                                                        : (log.reminder_type === 'email_sync' || log.type === 'email_sync' ? '📧 邮件' : '⏰ 定时')}
                                                 </span>
                                             </td>
                                             <td>
@@ -149,19 +156,45 @@ export function Logs() {
                                                     {log.status === 'success' ? '✅ 成功' : '❌ 失败'}
                                                 </span>
                                             </td>
-                                            <td style={{ fontFamily: 'var(--font-mono)' }}>
+                                            <td className={styles.mono}>
                                                 {log.duration_ms ? `${log.duration_ms}ms` : '-'}
                                             </td>
-                                            <td style={{ maxWidth: '300px', wordBreak: 'break-word', fontSize: '13px' }}>
-                                                {log.error ? (
-                                                    <span style={{ color: 'var(--error)' }}>{log.error}</span>
-                                                ) : log.response ? (
-                                                    <span style={{ color: 'var(--text-muted)' }}>
-                                                        {typeof log.response === 'string' ? log.response.slice(0, 100) : JSON.stringify(log.response).slice(0, 100)}
-                                                        {(typeof log.response === 'string' ? log.response : JSON.stringify(log.response)).length > 100 && '...'}
+                                            <td>
+                                                {log.detail_reason ? (
+                                                    <span className={`badge ${log.detail_reason === 'failed' ? 'badge-error' :
+                                                            log.detail_reason === 'slow' ? 'badge-warning' :
+                                                                log.detail_reason === 'escalated' ? 'badge-error' :
+                                                                    log.detail_reason === 'manual' ? 'badge-info' :
+                                                                        ''
+                                                        }`}>
+                                                        {{
+                                                            once: '📌 单次',
+                                                            failed: '❌ 失败',
+                                                            slow: '🐢 慢请求',
+                                                            escalated: '🔺 升档',
+                                                            sampled: '🎲 采样',
+                                                            heartbeat: '💓 心跳',
+                                                            manual: '👆 手动',
+                                                        }[log.detail_reason] || log.detail_reason}
                                                     </span>
                                                 ) : (
-                                                    '-'
+                                                    <span className={styles.mutedText}>-</span>
+                                                )}
+                                            </td>
+                                            <td className={styles.detailCell}>
+                                                {log.error ? (
+                                                    <span className={styles.errorText} title={log.error}>
+                                                        {log.error.length > 60 ? log.error.slice(0, 60) + '...' : log.error}
+                                                    </span>
+                                                ) : log.response ? (
+                                                    <span className={styles.mutedText} title={typeof log.response === 'string' ? log.response : JSON.stringify(log.response)}>
+                                                        {typeof log.response === 'string' ? log.response.slice(0, 60) : JSON.stringify(log.response).slice(0, 60)}
+                                                        {(typeof log.response === 'string' ? log.response : JSON.stringify(log.response)).length > 60 && '...'}
+                                                    </span>
+                                                ) : log.action ? (
+                                                    <span className={styles.mutedText}>{log.action}</span>
+                                                ) : (
+                                                    <span className={styles.mutedText}>-</span>
                                                 )}
                                             </td>
                                         </tr>
@@ -172,24 +205,26 @@ export function Logs() {
 
                         {/* 分页 */}
                         {totalPages > 1 && (
-                            <div className="pagination">
-                                <button
-                                    className="btn btn-ghost btn-sm"
-                                    onClick={() => setPage(p => Math.max(1, p - 1))}
-                                    disabled={page === 1}
-                                >
-                                    ← 上一页
-                                </button>
-                                <span className="pagination-info">
-                                    第 {page} / {totalPages} 页，共 {total} 条
+                            <div className={styles.paginationWrapper}>
+                                <span className={styles.paginationInfo}>
+                                    第 {page} / {totalPages} 页，共 {total} 条记录
                                 </span>
-                                <button
-                                    className="btn btn-ghost btn-sm"
-                                    onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                                    disabled={page === totalPages}
-                                >
-                                    下一页 →
-                                </button>
+                                <div className={styles.paginationButtons}>
+                                    <button
+                                        className="btn btn-secondary btn-sm"
+                                        onClick={() => setPage(p => Math.max(1, p - 1))}
+                                        disabled={page === 1}
+                                    >
+                                        上一页
+                                    </button>
+                                    <button
+                                        className="btn btn-secondary btn-sm"
+                                        onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                                        disabled={page === totalPages}
+                                    >
+                                        下一页
+                                    </button>
+                                </div>
                             </div>
                         )}
                     </>

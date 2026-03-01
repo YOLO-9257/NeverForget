@@ -1,13 +1,22 @@
 import { AiChatRequest, AiMessage, Env } from '../types';
+import { parseLlmResponseText } from './llmResponseParser';
 
 // 重试配置
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 1000;
 
+type JsonRecord = Record<string, unknown>;
+
 export interface ToolCall {
     id?: string;
     name: string;
-    args: any;
+    args: unknown;
+}
+
+export interface ToolDefinition {
+    name: string;
+    description?: string;
+    parameters?: unknown;
 }
 
 export interface LlmResponse {
@@ -15,104 +24,64 @@ export interface LlmResponse {
     toolCalls?: ToolCall[];
 }
 
-/**
- * 解析响应文本，支持普通 JSON 和 SSE (Server-Sent Events) 流式格式
- * SSE 格式通常以 "data: {json}" 开头
- */
-function parseResponseText(text: string): any {
-    const trimmed = text.trim();
-
-    // 检查是否是 SSE 格式 (以 "data:" 开头)
-    if (trimmed.startsWith('data:')) {
-        // 解析 SSE 流式响应
-        const lines = trimmed.split('\n');
-        let lastDataLine: string | null = null;
-
-        for (const line of lines) {
-            const trimmedLine = line.trim();
-            if (trimmedLine.startsWith('data:')) {
-                const dataContent = trimmedLine.substring(5).trim();
-                // 跳过 "[DONE]" 结束标记
-                if (dataContent !== '[DONE]') {
-                    lastDataLine = dataContent;
-                }
-            }
-        }
-
-        // 如果找到了有效的 data 行，尝试解析
-        if (lastDataLine) {
-            // 对于流式响应，可能需要合并多个 chunk
-            // 这里我们取最后一个有效的 data 行（通常包含完整响应）
-            // 或者尝试解析第一个 chunk
-            const firstDataLine = lines
-                .map(l => l.trim())
-                .find(l => l.startsWith('data:') && !l.includes('[DONE]'));
-
-            if (firstDataLine) {
-                const dataContent = firstDataLine.substring(5).trim();
-                try {
-                    return JSON.parse(dataContent);
-                } catch (e) {
-                    // 如果第一个 chunk 解析失败，尝试合并所有 chunk 的 content
-                    return extractFromSSEChunks(lines);
-                }
-            }
-        }
-
-        throw new Error(`Invalid SSE format: unable to parse response`);
-    }
-
-    // 普通 JSON 格式
-    return JSON.parse(trimmed);
+function isRecord(value: unknown): value is JsonRecord {
+    return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-/**
- * 从 SSE chunks 中提取并合并内容
- */
-function extractFromSSEChunks(lines: string[]): any {
-    const chunks: any[] = [];
+function asArray(value: unknown): unknown[] {
+    return Array.isArray(value) ? value : [];
+}
 
-    for (const line of lines) {
-        const trimmedLine = line.trim();
-        if (trimmedLine.startsWith('data:')) {
-            const dataContent = trimmedLine.substring(5).trim();
-            if (dataContent && dataContent !== '[DONE]') {
-                try {
-                    chunks.push(JSON.parse(dataContent));
-                } catch (e) {
-                    // 跳过无法解析的 chunk
-                }
-            }
+function safeJsonParse(text: string): unknown | null {
+    try {
+        return JSON.parse(text);
+    } catch {
+        return null;
+    }
+}
+
+function getErrorMessage(error: unknown): string {
+    if (error instanceof Error) {
+        return error.message;
+    }
+    return String(error);
+}
+
+function extractMessageText(content: unknown): string {
+    if (typeof content === 'string') {
+        return content;
+    }
+
+    if (!Array.isArray(content)) {
+        return '';
+    }
+
+    const parts: string[] = [];
+    for (const item of content) {
+        if (!isRecord(item)) {
+            continue;
+        }
+
+        if (typeof item.text === 'string') {
+            parts.push(item.text);
+            continue;
+        }
+
+        if (typeof item.content === 'string') {
+            parts.push(item.content);
         }
     }
 
-    if (chunks.length === 0) {
-        throw new Error('No valid chunks found in SSE response');
+    return parts.join('');
+}
+
+function parseToolArguments(rawArguments: unknown): unknown {
+    if (typeof rawArguments !== 'string') {
+        return rawArguments ?? {};
     }
 
-    // 合并 OpenAI 格式的流式响应 chunks
-    // OpenAI 流式响应的每个 chunk 包含 choices[0].delta.content
-    if (chunks[0]?.choices?.[0]?.delta !== undefined) {
-        let mergedContent = '';
-        for (const chunk of chunks) {
-            const delta = chunk.choices?.[0]?.delta;
-            if (delta?.content) {
-                mergedContent += delta.content;
-            }
-        }
-        // 返回一个类似完整 OpenAI 响应的结构
-        return {
-            choices: [{
-                message: {
-                    role: 'assistant',
-                    content: mergedContent
-                }
-            }]
-        };
-    }
-
-    // 如果不是流式格式，返回第一个完整的 chunk
-    return chunks[0];
+    const parsed = safeJsonParse(rawArguments);
+    return parsed ?? {};
 }
 
 /**
@@ -122,6 +91,73 @@ function delay(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function buildGeminiBody(messages: AiMessage[], tools?: ToolDefinition[]): JsonRecord {
+    const systemMessage = messages.find(m => m.role === 'system');
+    const chatMessages = messages.filter(m => m.role !== 'system');
+
+    const contents = chatMessages.map((message) => ({
+        role: message.role === 'model' ? 'model' : 'user',
+        parts: [{ text: message.content }],
+    }));
+
+    const body: JsonRecord = {
+        contents,
+        generationConfig: {
+            temperature: 0.7,
+            maxOutputTokens: 2000,
+        },
+    };
+
+    if (systemMessage) {
+        body.systemInstruction = {
+            parts: [{ text: systemMessage.content }],
+        };
+    }
+
+    if (tools && tools.length > 0) {
+        body.tools = [{
+            function_declarations: tools.map((tool) => ({
+                name: tool.name,
+                description: tool.description || '',
+                parameters: tool.parameters ?? { type: 'object', properties: {} },
+            })),
+        }];
+    }
+
+    return body;
+}
+
+function buildOpenAiBody(messages: AiMessage[], modelName: string, tools?: ToolDefinition[]): JsonRecord {
+    const openaiMessages = messages
+        .filter(m => m.content && m.content.trim() !== '')
+        .map((message) => ({
+            role: message.role === 'model' ? 'assistant' : message.role,
+            content: message.content,
+        }));
+
+    const body: JsonRecord = {
+        model: modelName,
+        messages: openaiMessages,
+        temperature: 0.7,
+        max_tokens: 2000,
+        stream: false,
+    };
+
+    if (tools && tools.length > 0) {
+        body.tools = tools.map((tool) => ({
+            type: 'function',
+            function: {
+                name: tool.name,
+                description: tool.description || '',
+                parameters: tool.parameters ?? { type: 'object', properties: {} },
+            },
+        }));
+        body.tool_choice = 'auto';
+    }
+
+    return body;
+}
+
 /**
  * 简单的 AI 客户端，用于 Worker 端调用外部 LLM
  */
@@ -129,7 +165,7 @@ export async function callLlmInWorker(
     messages: AiMessage[],
     config: AiChatRequest,
     env: Env,
-    tools?: any[] // Generic tool definitions
+    tools?: ToolDefinition[]
 ): Promise<LlmResponse> {
     const provider = config.provider || env.AI_PROVIDER || 'gemini';
     const apiKey = config.apiKey || env.AI_API_KEY;
@@ -139,60 +175,31 @@ export async function callLlmInWorker(
     }
 
     if (provider === 'gemini') {
-        return await callGemini(messages, apiKey, config.baseUrl, config.model, tools);
-    } else {
-        return await callOpenAI(messages, apiKey, config.baseUrl, config.model, tools);
+        return callGemini(messages, apiKey, config.baseUrl, config.model, tools);
     }
+
+    return callOpenAI(messages, apiKey, config.baseUrl, config.model, tools);
 }
 
-async function callGemini(messages: AiMessage[], apiKey: string, baseUrl?: string, model?: string, tools?: any[]): Promise<LlmResponse> {
+async function callGemini(
+    messages: AiMessage[],
+    apiKey: string,
+    baseUrl?: string,
+    model?: string,
+    tools?: ToolDefinition[]
+): Promise<LlmResponse> {
     const url = baseUrl || 'https://generativelanguage.googleapis.com/v1beta';
     const modelName = model || 'gemini-2.0-flash';
+    const body = buildGeminiBody(messages, tools);
 
-    // Separate system prompt
-    const systemMessage = messages.find(m => m.role === 'system');
-    const chatMessages = messages.filter(m => m.role !== 'system');
+    let lastErrorMessage = '';
 
-    const contents = chatMessages.map(m => {
-        return {
-            role: m.role === 'model' ? 'model' : 'user',
-            parts: [{ text: m.content }]
-        };
-    });
-
-    const body: any = {
-        contents,
-        generationConfig: {
-            temperature: 0.7,
-            maxOutputTokens: 2000,
-        }
-    };
-
-    if (systemMessage) {
-        body.systemInstruction = {
-            parts: [{ text: systemMessage.content }]
-        };
-    }
-
-    if (tools && tools.length > 0) {
-        body.tools = [{
-            function_declarations: tools.map(t => ({
-                name: t.name,
-                description: t.description,
-                parameters: t.parameters
-            }))
-        }];
-    }
-
-    let lastError: Error | null = null;
-
-    // 自动重试机制
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
         try {
             const response = await fetch(`${url}/models/${modelName}:generateContent?key=${apiKey}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body)
+                body: JSON.stringify(body),
             });
 
             if (!response.ok) {
@@ -200,91 +207,75 @@ async function callGemini(messages: AiMessage[], apiKey: string, baseUrl?: strin
                 throw new Error(`Gemini API Error: ${response.status} ${errText}`);
             }
 
-            // 使用 parseResponseText 支持 SSE 和普通 JSON 格式
             const responseText = await response.text();
-            const data: any = parseResponseText(responseText);
+            const parsed = parseLlmResponseText(responseText);
+            const parsedRecord = isRecord(parsed) ? parsed : {};
 
-            const candidate = data.candidates?.[0];
-            const content = candidate?.content;
-            const parts = content?.parts || [];
+            const candidates = asArray(parsedRecord.candidates);
+            const firstCandidate = isRecord(candidates[0]) ? candidates[0] : null;
+            const content = firstCandidate && isRecord(firstCandidate.content)
+                ? firstCandidate.content
+                : null;
+            const parts = asArray(content?.parts);
 
-            let text = "";
+            let text = '';
             const toolCalls: ToolCall[] = [];
 
-            for (const part of parts) {
-                if (part.text) {
+            for (const rawPart of parts) {
+                const part = isRecord(rawPart) ? rawPart : null;
+                if (!part) {
+                    continue;
+                }
+
+                if (typeof part.text === 'string') {
                     text += part.text;
                 }
-                if (part.functionCall) {
+
+                const functionCall = isRecord(part.functionCall) ? part.functionCall : null;
+                if (functionCall && typeof functionCall.name === 'string' && functionCall.name) {
                     toolCalls.push({
-                        name: part.functionCall.name,
-                        args: part.functionCall.args
+                        name: functionCall.name,
+                        args: functionCall.args ?? {},
                     });
                 }
             }
 
             return { text, toolCalls: toolCalls.length ? toolCalls : undefined };
-
-        } catch (e: any) {
-            lastError = e;
-            console.warn(`[Gemini] Attempt ${attempt}/${MAX_RETRIES} failed: ${e.message}`);
+        } catch (error) {
+            lastErrorMessage = getErrorMessage(error);
+            console.warn(`[Gemini] Attempt ${attempt}/${MAX_RETRIES} failed: ${lastErrorMessage}`);
 
             if (attempt < MAX_RETRIES) {
-                // 等待后重试
                 await delay(RETRY_DELAY_MS * attempt);
             }
         }
     }
 
-    // 所有重试都失败
-    throw new Error(`Gemini API failed after ${MAX_RETRIES} retries: ${lastError?.message}`);
+    throw new Error(`Gemini API failed after ${MAX_RETRIES} retries: ${lastErrorMessage}`);
 }
 
-
-async function callOpenAI(messages: AiMessage[], apiKey: string, baseUrl?: string, model?: string, tools?: any[]): Promise<LlmResponse> {
+async function callOpenAI(
+    messages: AiMessage[],
+    apiKey: string,
+    baseUrl?: string,
+    model?: string,
+    tools?: ToolDefinition[]
+): Promise<LlmResponse> {
     const url = baseUrl || 'https://api.openai.com/v1';
     const modelName = model || 'gpt-4o-mini';
+    const body = buildOpenAiBody(messages, modelName, tools);
 
-    // OpenAI API 不接受空 content，需要过滤掉空消息
-    const openaiMessages = messages
-        .filter(m => m.content && m.content.trim() !== '')
-        .map(m => ({
-            role: m.role === 'model' ? 'assistant' : m.role,
-            content: m.content
-        }));
+    let lastErrorMessage = '';
 
-    const body: any = {
-        model: modelName,
-        messages: openaiMessages,
-        temperature: 0.7,
-        max_tokens: 2000,
-        stream: false  // 显式禁用流式响应
-    };
-
-    if (tools && tools.length > 0) {
-        body.tools = tools.map(t => ({
-            type: 'function',
-            function: {
-                name: t.name,
-                description: t.description,
-                parameters: t.parameters
-            }
-        }));
-        body.tool_choice = "auto";
-    }
-
-    let lastError: Error | null = null;
-
-    // 自动重试机制
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
         try {
             const response = await fetch(`${url}/chat/completions`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${apiKey}`
+                    'Authorization': `Bearer ${apiKey}`,
                 },
-                body: JSON.stringify(body)
+                body: JSON.stringify(body),
             });
 
             if (!response.ok) {
@@ -292,45 +283,55 @@ async function callOpenAI(messages: AiMessage[], apiKey: string, baseUrl?: strin
                 throw new Error(`OpenAI API Error: ${response.status} ${errText}`);
             }
 
-            // 使用 parseResponseText 支持 SSE 和普通 JSON 格式
             const responseText = await response.text();
-            const data: any = parseResponseText(responseText);
+            const parsed = parseLlmResponseText(responseText);
+            const parsedRecord = isRecord(parsed) ? parsed : {};
 
-            const choice = data.choices?.[0];
-            const message = choice?.message;
+            const choices = asArray(parsedRecord.choices);
+            const firstChoice = isRecord(choices[0]) ? choices[0] : null;
+            const message = firstChoice && isRecord(firstChoice.message)
+                ? firstChoice.message
+                : null;
 
-            const text = message?.content || "";
+            const text = extractMessageText(message?.content);
+            const rawToolCalls = asArray(message?.tool_calls);
             const toolCalls: ToolCall[] = [];
 
-            if (message?.tool_calls) {
-                for (const tc of message.tool_calls) {
-                    if (tc.type === 'function') {
-                        try {
-                            toolCalls.push({
-                                id: tc.id,
-                                name: tc.function.name,
-                                args: JSON.parse(tc.function.arguments)
-                            });
-                        } catch (e) {
-                            console.error("Failed to parse tool args", e);
-                        }
-                    }
+            for (const rawToolCall of rawToolCalls) {
+                const toolCallRecord = isRecord(rawToolCall) ? rawToolCall : null;
+                if (!toolCallRecord) {
+                    continue;
                 }
+
+                if (toolCallRecord.type !== 'function') {
+                    continue;
+                }
+
+                const functionPayload = isRecord(toolCallRecord.function)
+                    ? toolCallRecord.function
+                    : null;
+
+                if (!functionPayload || typeof functionPayload.name !== 'string' || !functionPayload.name) {
+                    continue;
+                }
+
+                toolCalls.push({
+                    id: typeof toolCallRecord.id === 'string' ? toolCallRecord.id : undefined,
+                    name: functionPayload.name,
+                    args: parseToolArguments(functionPayload.arguments),
+                });
             }
 
             return { text, toolCalls: toolCalls.length ? toolCalls : undefined };
-
-        } catch (e: any) {
-            lastError = e;
-            console.warn(`[OpenAI] Attempt ${attempt}/${MAX_RETRIES} failed: ${e.message}`);
+        } catch (error) {
+            lastErrorMessage = getErrorMessage(error);
+            console.warn(`[OpenAI] Attempt ${attempt}/${MAX_RETRIES} failed: ${lastErrorMessage}`);
 
             if (attempt < MAX_RETRIES) {
-                // 等待后重试
                 await delay(RETRY_DELAY_MS * attempt);
             }
         }
     }
 
-    // 所有重试都失败
-    throw new Error(`OpenAI API failed after ${MAX_RETRIES} retries: ${lastError?.message}`);
+    throw new Error(`OpenAI API failed after ${MAX_RETRIES} retries: ${lastErrorMessage}`);
 }

@@ -23,12 +23,15 @@ jobs:
       run: npm ci
 
     - name: Lint
-      run: npm run lint || echo "No lint script found"
+      run: npm run lint
 
     - name: Build Worker
       run: npm run build
       env:
         NODE_OPTIONS: --max_old_space_size=4096
+
+    - name: Test Worker
+      run: npm test
 
     - name: Build Admin
       run: |

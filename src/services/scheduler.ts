@@ -2,10 +2,71 @@
  * 调度服务 - 处理定时任务的触发和执行
  */
 
-import { Env, Reminder, PushConfig, EmailAccount } from '../types';
+import { Env, Reminder, PushConfig } from '../types';
 import { sendPush } from './pusher';
 import { calculateNextTrigger } from '../utils/time';
 import { runImapPolling, syncEmailAccount } from './imapPoller';
+import { processAIQueue } from '../handlers/emailAiSummary';
+import { recordExecution } from './execLogger';
+import { cleanupOldLogs } from './logCleaner';
+
+function getTimezoneOffsetAt(timestamp: number, timezone: string): number {
+    const reference = new Date(timestamp);
+    const utcString = reference.toLocaleString('en-US', { timeZone: 'UTC' });
+    const tzString = reference.toLocaleString('en-US', { timeZone: timezone });
+    return new Date(tzString).getTime() - new Date(utcString).getTime();
+}
+
+function localToUtcAtDate(
+    year: number,
+    month: number,
+    day: number,
+    hours: number,
+    minutes: number,
+    timezone: string
+): number {
+    const utcDate = Date.UTC(year, month - 1, day, hours, minutes, 0, 0);
+    const offset = getTimezoneOffsetAt(utcDate, timezone);
+    return utcDate - offset;
+}
+
+function getDatePartsInTimezone(timestamp: number, timezone: string): { year: number; month: number; day: number } {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: timezone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+    }).formatToParts(new Date(timestamp));
+
+    const year = Number(parts.find(part => part.type === 'year')?.value || '0');
+    const month = Number(parts.find(part => part.type === 'month')?.value || '0');
+    const day = Number(parts.find(part => part.type === 'day')?.value || '0');
+
+    return { year, month, day };
+}
+
+async function resetDailyAckStatus(env: Env, now: number): Promise<void> {
+    const timezone = env.TIMEZONE || 'Asia/Shanghai';
+    const { year, month, day } = getDatePartsInTimezone(now, timezone);
+    const todayStart = localToUtcAtDate(year, month, day, 0, 0, timezone);
+
+    const result = await env.DB.prepare(`
+        UPDATE reminders
+        SET ack_status = 'none',
+            last_ack_at = NULL,
+            updated_at = ?
+        WHERE ack_required = 1
+          AND status = 'active'
+          AND ack_status = 'completed'
+          AND last_ack_at IS NOT NULL
+          AND last_ack_at < ?
+    `).bind(now, todayStart).run();
+
+    const changed = Number(result.meta?.changes || 0);
+    if (changed > 0) {
+        console.log(`[Scheduler] 每日回调确认状态重置完成，影响任务数: ${changed}`);
+    }
+}
 
 /**
  * 处理定时触发
@@ -17,8 +78,23 @@ export async function handleScheduledTrigger(env: Env): Promise<void> {
     console.log(`[Scheduler] 开始执行定时任务检查, 当前时间: ${new Date(now).toISOString()}`);
 
     try {
+        // 每日自动重置前一天已确认的回调状态，便于用户新一天再次确认执行情况
+        await resetDailyAckStatus(env, now);
+
         // 执行到期的提醒任务（包括普通提醒和邮箱同步任务）
         await executeScheduledReminders(env, now);
+
+        // 顺带处理 AI 摘要队列，让摘要在后台自动产出
+        await processAIQueue(env, 12);
+
+        // 每日凌晨清理过期日志（UTC 16:00 = 上海时间 00:00）
+        // Cron 每分钟触发，限制到 16:00 当分钟，避免同一小时重复执行 60 次
+        const nowUtc = new Date(now);
+        const hour = nowUtc.getUTCHours();
+        const minute = nowUtc.getUTCMinutes();
+        if (hour === 16 && minute === 0) {
+            await cleanupOldLogs(env);
+        }
 
         console.log(`[Scheduler] 所有任务执行完成`);
     } catch (error) {
@@ -60,6 +136,19 @@ async function executeEmailSyncTask(
             result.duration || 0
         ).run();
 
+        // 三层日志写入（双写）
+        await recordExecution(env, {
+            reminderId: reminder.id,
+            userKey: reminder.user_key,
+            taskType: 'email_sync',
+            scheduleType: reminder.schedule_type,
+            triggeredAt,
+            status: result.success ? 'success' : 'failed',
+            response: result.emailsForwarded > 0 ? `同步 ${result.emailsFound} 封, 转发 ${result.emailsForwarded} 封` : null,
+            error: result.error || null,
+            durationMs: result.duration || 0,
+        });
+
         // 更新下次触发时间
         const nextTrigger = calculateNextTrigger(
             reminder.schedule_type,
@@ -68,7 +157,8 @@ async function executeEmailSyncTask(
             reminder.schedule_weekday,
             reminder.schedule_day,
             reminder.timezone,
-            new Date(triggeredAt)
+            new Date(triggeredAt),
+            reminder.schedule_cron
         );
 
         if (nextTrigger) {
@@ -89,6 +179,35 @@ async function executeEmailSyncTask(
             triggeredAt,
             error instanceof Error ? error.message : '未知错误'
         ).run();
+
+        // 三层日志写入（双写）
+        await recordExecution(env, {
+            reminderId: reminder.id,
+            userKey: reminder.user_key,
+            taskType: 'email_sync',
+            scheduleType: reminder.schedule_type,
+            triggeredAt,
+            status: 'failed',
+            error: error instanceof Error ? error.message : '未知错误',
+            durationMs: 0,
+        });
+
+        // 兜底更新下次执行时间，避免异常时任务在当前分钟被反复触发
+        const nextTrigger = calculateNextTrigger(
+            reminder.schedule_type,
+            reminder.schedule_time,
+            reminder.schedule_date,
+            reminder.schedule_weekday,
+            reminder.schedule_day,
+            reminder.timezone,
+            new Date(triggeredAt),
+            reminder.schedule_cron
+        ) || (triggeredAt + 60 * 1000);
+        await env.DB.prepare(`
+            UPDATE reminders
+            SET next_trigger_at = ?, last_trigger_at = ?, trigger_count = trigger_count + 1, updated_at = ?
+            WHERE id = ?
+        `).bind(nextTrigger, triggeredAt, triggeredAt, reminder.id).run();
     }
 }
 
@@ -99,8 +218,11 @@ async function executeScheduledReminders(env: Env, now: number): Promise<void> {
     // 查询所有到期且状态为 active 的任务
     const result = await env.DB.prepare(`
       SELECT * FROM reminders 
-      WHERE next_trigger_at <= ? 
-        AND status = 'active'
+      WHERE status = 'active'
+        AND (
+            next_trigger_at <= ?
+            OR (next_trigger_at IS NULL AND type = 'email_sync')
+        )
       ORDER BY next_trigger_at ASC
       LIMIT 50
     `).bind(now).all<Reminder>();
@@ -170,6 +292,20 @@ export async function testRunReminder(
             result.duration
         ).run();
 
+        // 三层日志写入（双写，手动触发）
+        await recordExecution(env, {
+            reminderId: reminder.id,
+            userKey: reminder.user_key,
+            taskType: (reminder.type || 'reminder') as 'reminder' | 'email_sync',
+            scheduleType: reminder.schedule_type,
+            triggeredAt,
+            status: result.success ? 'success' : 'failed',
+            response: result.response ? JSON.stringify(result.response) : null,
+            error: result.error || null,
+            durationMs: result.duration,
+            isManual: true,
+        });
+
         // **注意：手动触发不更新 reminders 表的 next_trigger_at**
 
         return { success: result.success, error: result.error };
@@ -185,6 +321,19 @@ export async function testRunReminder(
             triggeredAt,
             error instanceof Error ? error.message : '未知错误'
         ).run();
+
+        // 三层日志写入（双写，手动触发异常）
+        await recordExecution(env, {
+            reminderId: reminder.id,
+            userKey: reminder.user_key,
+            taskType: (reminder.type || 'reminder') as 'reminder' | 'email_sync',
+            scheduleType: reminder.schedule_type,
+            triggeredAt,
+            status: 'failed',
+            error: error instanceof Error ? error.message : '未知错误',
+            durationMs: 0,
+            isManual: true,
+        });
 
         return { success: false, error: error instanceof Error ? error.message : '未知错误' };
     }
@@ -253,6 +402,19 @@ async function executeReminder(
             result.duration
         ).run();
 
+        // 三层日志写入（双写）
+        await recordExecution(env, {
+            reminderId: reminder.id,
+            userKey: reminder.user_key,
+            taskType: (reminder.type || 'reminder') as 'reminder' | 'email_sync',
+            scheduleType: reminder.schedule_type,
+            triggeredAt,
+            status: result.success ? 'success' : 'failed',
+            response: result.response ? JSON.stringify(result.response) : null,
+            error: result.error || null,
+            durationMs: result.duration,
+        });
+
         // 状态更新逻辑
         let updates: Promise<any>;
 
@@ -279,7 +441,8 @@ async function executeReminder(
                 reminder.schedule_weekday,
                 reminder.schedule_day,
                 reminder.timezone,
-                new Date(triggeredAt)
+                new Date(triggeredAt),
+                reminder.schedule_cron
             );
 
             if (nextTrigger === null) {
@@ -326,5 +489,17 @@ async function executeReminder(
             triggeredAt,
             error instanceof Error ? error.message : '未知错误'
         ).run();
+
+        // 三层日志写入（双写，异常路径）
+        await recordExecution(env, {
+            reminderId: reminder.id,
+            userKey: reminder.user_key,
+            taskType: (reminder.type || 'reminder') as 'reminder' | 'email_sync',
+            scheduleType: reminder.schedule_type,
+            triggeredAt,
+            status: 'failed',
+            error: error instanceof Error ? error.message : '未知错误',
+            durationMs: 0,
+        });
     }
 }

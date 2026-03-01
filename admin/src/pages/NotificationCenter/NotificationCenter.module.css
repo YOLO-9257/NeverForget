@@ -1,0 +1,176 @@
+.pageContainer {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+}
+
+.pageHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.pageTitle {
+    font-size: 28px;
+    font-weight: 800;
+    color: var(--text-primary);
+    margin-bottom: 6px;
+    letter-spacing: -0.5px;
+}
+
+.pageSubtitle {
+    font-size: 14px;
+    color: var(--text-muted);
+}
+
+.summaryGrid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(120px, 1fr));
+    gap: 16px;
+}
+
+.summaryCard {
+    /* Styles are handled by Card component, but we can add specific overrides here if needed */
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.summaryLabel {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-muted);
+}
+
+.summaryValue {
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--text-primary);
+    line-height: 1.2;
+}
+
+.filterBar {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    align-items: center;
+    background: var(--bg-surface);
+    padding: 16px;
+    border-radius: var(--radius-md) var(--radius-md) 0 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.searchInput {
+    flex: 1;
+    min-width: 260px;
+}
+
+.filterSelect {
+    width: 160px;
+}
+
+.tableContainer {
+    width: 100%;
+    overflow-x: auto;
+}
+
+.table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.table th {
+    white-space: nowrap;
+    padding: 12px 16px;
+    text-align: left;
+    font-weight: 600;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+}
+
+.table td {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 14px;
+    color: var(--text-primary);
+}
+
+.table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.mono {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.titleCell {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.titleText {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.subText {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+}
+
+.errorCell {
+    max-width: 260px;
+    color: var(--text-error);
+    font-size: 13px;
+    line-height: 1.4;
+}
+
+.pagination {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px;
+    border-top: 1px solid var(--border);
+}
+
+.paginationInfo {
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+.paginationButtons {
+    display: flex;
+    gap: 8px;
+}
+
+.emptyState {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 48px;
+    color: var(--text-muted);
+    gap: 12px;
+}
+
+.emptyStateIcon {
+    font-size: 32px;
+}
+
+.loading {
+    display: flex;
+    justify-content: center;
+    padding: 48px;
+}
+
+@media (max-width: 960px) {
+    .summaryGrid {
+        grid-template-columns: repeat(2, minmax(120px, 1fr));
+    }
+}

@@ -9,9 +9,20 @@ interface BeforeInstallPromptEvent extends Event {
   prompt(): Promise<void>;
 }
 
+interface BackgroundSyncManager {
+  register(tag: string): Promise<void>;
+}
+
+interface ServiceWorkerRegistrationWithSync extends ServiceWorkerRegistration {
+  sync?: BackgroundSyncManager;
+}
+
 declare global {
   interface WindowEventMap {
     'beforeinstallprompt': BeforeInstallPromptEvent;
+  }
+  interface Navigator {
+    standalone?: boolean;
   }
 }
 
@@ -79,7 +90,7 @@ class PWAManager {
 
     // 检查是否已安装
     if (window.matchMedia('(display-mode: standalone)').matches ||
-        (window.navigator as any).standalone === true) {
+        window.navigator.standalone === true) {
       this.updateStatus({ isInstalled: true });
     }
   }
@@ -267,8 +278,8 @@ class PWAManager {
     }
 
     try {
-      // 类型断言以解决TypeScript问题
-      const syncManager = (this.swRegistration as any).sync;
+      const registrationWithSync = this.swRegistration as ServiceWorkerRegistrationWithSync;
+      const syncManager = registrationWithSync.sync;
       if (!syncManager) {
         console.warn('Background Sync not supported');
         return false;
@@ -324,10 +335,11 @@ class PWAManager {
    * 检查是否支持PWA功能
    */
   checkSupport(): { sw: boolean; push: boolean; sync: boolean } {
+    const registrationPrototype = ServiceWorkerRegistration.prototype as ServiceWorkerRegistrationWithSync;
     return {
       sw: 'serviceWorker' in navigator,
       push: 'PushManager' in window,
-      sync: 'sync' in (ServiceWorkerRegistration.prototype as any)
+      sync: 'sync' in registrationPrototype
     };
   }
 
@@ -335,7 +347,7 @@ class PWAManager {
   private urlBase64ToUint8Array(base64String: string): Uint8Array {
     const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
     const base64 = (base64String + padding)
-      .replace(/\-/g, '+')
+      .replace(/-/g, '+')
       .replace(/_/g, '/');
 
     const rawData = window.atob(base64);

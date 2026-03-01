@@ -1,0 +1,167 @@
+/**
+ * Tabs 组件样式
+ * @author zhangws
+ */
+
+.tabs {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-lg);
+}
+
+/* ========================================
+ * 标签列表
+ * ======================================== */
+
+.tabsList {
+    display: flex;
+    gap: var(--space-xs);
+    overflow-x: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+
+.tabsList::-webkit-scrollbar {
+    display: none;
+}
+
+/* Default 变体 */
+.tabsListDefault {
+    background: var(--bg-surface);
+    padding: var(--space-xs);
+    border-radius: var(--radius-md);
+}
+
+/* Pills 变体 */
+.tabsListPills {
+    gap: var(--space-sm);
+}
+
+/* Underline 变体 */
+.tabsListUnderline {
+    border-bottom: 1px solid var(--border-subtle);
+    padding-bottom: 0;
+    gap: 0;
+}
+
+/* ========================================
+ * 标签触发器
+ * ======================================== */
+
+.tabsTrigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-sm);
+    padding: var(--space-sm) var(--space-md);
+    font-family: var(--font-sans);
+    font-size: var(--text-sm);
+    font-weight: var(--font-medium);
+    color: var(--text-secondary);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    white-space: nowrap;
+    user-select: none;
+    transition: all var(--transition-fast);
+}
+
+.tabsTrigger:focus {
+    outline: none;
+}
+
+.tabsTrigger:focus-visible {
+    box-shadow: 0 0 0 3px var(--border-focus);
+}
+
+.tabsTrigger:hover:not(.disabled) {
+    color: var(--text-primary);
+}
+
+.tabsTrigger.disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Default 变体触发器 */
+.tabsTriggerDefault {
+    border-radius: var(--radius-sm);
+}
+
+.tabsTriggerDefault.active {
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+    box-shadow: var(--shadow-sm);
+}
+
+/* Pills 变体触发器 */
+.tabsTriggerPills {
+    border-radius: var(--radius-full);
+    border: 1px solid transparent;
+}
+
+.tabsTriggerPills.active {
+    background: var(--primary-light);
+    color: var(--primary);
+    border-color: var(--primary);
+}
+
+/* Underline 变体触发器 */
+.tabsTriggerUnderline {
+    position: relative;
+    padding: var(--space-md) var(--space-lg);
+    border-radius: 0;
+}
+
+.tabsTriggerUnderline::after {
+    content: '';
+    position: absolute;
+    bottom: -1px;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: transparent;
+    transition: background var(--transition-fast);
+}
+
+.tabsTriggerUnderline.active {
+    color: var(--primary);
+}
+
+.tabsTriggerUnderline.active::after {
+    background: var(--primary);
+}
+
+/* ========================================
+ * 标签内容
+ * ======================================== */
+
+.tabsContent {
+    animation: fadeIn 0.2s ease;
+    outline: none;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+
+    to {
+        opacity: 1;
+    }
+}
+
+/* ========================================
+ * 响应式
+ * ======================================== */
+
+@media (max-width: 640px) {
+    .tabsTrigger {
+        padding: var(--space-xs) var(--space-sm);
+        font-size: var(--text-xs);
+    }
+
+    .tabsTriggerUnderline {
+        padding: var(--space-sm) var(--space-md);
+    }
+}

@@ -1,0 +1,143 @@
+/**
+ * ForwardingStats 样式
+ * @author zhangws
+ */
+
+.card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    margin-top: 24px;
+}
+
+.header {
+    padding: 20px 24px 0;
+}
+
+.title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+}
+
+/* 统计信息 */
+.stats {
+    padding: 16px 24px;
+}
+
+.statRow {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    background: var(--bg-elevated);
+    border-radius: var(--radius-md);
+    margin-bottom: 8px;
+}
+
+.statRow:last-child {
+    margin-bottom: 0;
+}
+
+.statLabel {
+    font-size: 14px;
+    color: var(--text-muted);
+}
+
+.statValue {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+/* 日志区域 */
+.logsSection {
+    padding: 16px 24px;
+    border-top: 1px solid var(--border);
+}
+
+.logsSummary {
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: 14px;
+}
+
+.logsSummary:hover {
+    color: var(--text-primary);
+}
+
+.logsTable {
+    margin-top: 12px;
+    overflow-x: auto;
+}
+
+.table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.table th,
+.table td {
+    padding: 10px 12px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+}
+
+.table th {
+    background: var(--bg-elevated);
+    color: var(--text-muted);
+    font-weight: 600;
+}
+
+.table td {
+    color: var(--text-primary);
+}
+
+.table tbody tr:hover {
+    background: var(--bg-glass-hover);
+}
+
+.noWrap {
+    white-space: nowrap;
+}
+
+.ellipsis {
+    max-width: 150px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ellipsisWide {
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* 状态徽章 */
+.badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.badgeSuccess {
+    background: hsla(142, 76%, 36%, 0.1);
+    color: var(--success);
+}
+
+.badgeError {
+    background: hsla(345, 95%, 55%, 0.1);
+    color: var(--error);
+}
+
+.emptyLogs {
+    margin-top: 12px;
+    color: var(--text-muted);
+    font-size: 14px;
+}

@@ -1,0 +1,192 @@
+/**
+ * AccountCard 样式
+ * @author zhangws
+ */
+
+.card {
+    position: relative;
+    background: linear-gradient(145deg, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0.01) 100%);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-xl);
+    /* 更大的圆角 */
+    padding: 24px;
+    /* 增加内边距 */
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    /* 增加行间距 */
+    overflow: hidden;
+}
+
+/* 顶部高光条 */
+.card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+    opacity: 0.5;
+}
+
+.card:hover {
+    border-color: var(--primary-light);
+    transform: translateY(-4px);
+    /* 更明显的上浮 */
+    box-shadow: 0 12px 32px -8px rgba(0, 0, 0, 0.3),
+        0 0 0 1px rgba(99, 102, 241, 0.1);
+    /* 辉光 */
+    background: linear-gradient(145deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.02) 100%);
+}
+
+.card:focus {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--primary-glow);
+}
+
+.card.disabled {
+    opacity: 0.6;
+}
+
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+}
+
+.info {
+    flex: 1;
+}
+
+.name {
+    font-size: 1.1rem;
+    /* 稍微加大标题 */
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--text-primary);
+    margin-bottom: 6px;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+.email {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.status {
+    flex-shrink: 0;
+}
+
+.badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 10px;
+    border-radius: var(--radius-full);
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.badgeActive {
+    background: hsla(155, 95%, 40%, 0.15);
+    color: hsl(155, 95%, 60%);
+    border: 1px solid hsla(155, 95%, 40%, 0.2);
+}
+
+.badgeInactive {
+    background: hsla(215, 20%, 50%, 0.15);
+    color: var(--text-muted);
+    border: 1px solid hsla(215, 20%, 50%, 0.2);
+}
+
+.badgeSyncing {
+    background: hsla(210, 100%, 55%, 0.15);
+    color: hsl(210, 100%, 65%);
+    border: 1px solid hsla(210, 100%, 55%, 0.2);
+    animation: pulse 1.5s infinite;
+}
+
+.badgeError {
+    background: hsla(345, 95%, 55%, 0.15);
+    color: hsl(345, 100%, 70%);
+    border: 1px solid hsla(345, 95%, 55%, 0.2);
+}
+
+.meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.metaItem {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.syncStatus {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.lastSync {
+    opacity: 0.7;
+}
+
+.actions {
+    display: flex;
+    gap: 12px;
+    /* 按钮之间更宽松 */
+    margin-top: auto;
+    padding-top: 20px;
+    /* 分割线距离更大 */
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.actionBtn {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 10px 16px;
+    /* 更大的点击区域 */
+    background: rgba(255, 255, 255, 0.03);
+    /* 更微妙的背景 */
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+}
+
+.actionBtn:hover:not(:disabled) {
+    background: var(--bg-elevated);
+    border-color: var(--border-light);
+}
+
+.actionBtn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.deleteBtn:hover:not(:disabled) {
+    background: hsla(345, 95%, 55%, 0.1);
+    border-color: var(--error);
+}
+
+@keyframes pulse {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.6;
+    }
+}

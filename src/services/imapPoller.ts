@@ -5,10 +5,12 @@
  * 负责定期检查配置了 IMAP 的用户邮箱，拉取新邮件并推送通知
  */
 
-import { Env, EmailSettings, ForwardRules, EmailData, EmailFilterRule } from '../types';
+import { Env, EmailSettings, ForwardRules, EmailData, EmailFilterRule, AiFilterConfig } from '../types';
 import { fetchNewEmails, EmailSummary, ImapConfig } from './ImapClient';
 import { decryptPassword } from '../utils/crypto';
-import { shouldForwardEmail, forwardEmailToPush, logAndFinishForward, checkAiSpam } from './emailService';
+import { shouldForwardEmail, forwardEmailToPush, logAndFinishForward, checkAiSpam, PushSummaryContext } from './emailService';
+import { resolveAiConfigForAccount } from './aiConfigResolver';
+import { getOrGenerateEmailSummaryById } from '../handlers/emailAiSummary';
 
 /**
  * IMAP 轮询结果
@@ -255,6 +257,85 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * 将邮件加入 AI 摘要处理队列
+ * - 新邮件：创建 pending 任务
+ * - 失败任务：重置为 pending 便于重试
+ * - 处理中/已完成：保持现状，避免打断正在处理的任务
+ */
+async function queueEmailSummaryJob(env: Env, emailId: number, priority: number = 0): Promise<void> {
+    const now = Date.now();
+    try {
+        await env.DB.prepare(`
+            INSERT INTO ai_processing_queue (
+                email_id, priority, status, retry_count, error_message, created_at
+            ) VALUES (?, ?, 'pending', 0, NULL, ?)
+            ON CONFLICT(email_id) DO UPDATE SET
+                priority = CASE
+                    WHEN ai_processing_queue.status = 'pending' AND excluded.priority > ai_processing_queue.priority
+                    THEN excluded.priority
+                    ELSE ai_processing_queue.priority
+                END,
+                status = CASE
+                    WHEN ai_processing_queue.status = 'failed' THEN 'pending'
+                    ELSE ai_processing_queue.status
+                END,
+                retry_count = CASE
+                    WHEN ai_processing_queue.status = 'failed' THEN 0
+                    ELSE ai_processing_queue.retry_count
+                END,
+                error_message = CASE
+                    WHEN ai_processing_queue.status = 'failed' THEN NULL
+                    ELSE ai_processing_queue.error_message
+                END,
+                created_at = CASE
+                    WHEN ai_processing_queue.status = 'failed' THEN excluded.created_at
+                    ELSE ai_processing_queue.created_at
+                END
+        `).bind(String(emailId), priority, now).run();
+    } catch (error) {
+        console.warn(`[IMAP Poller] 添加摘要任务失败 (email_id=${emailId})`, error);
+    }
+}
+
+const DEFAULT_ADS_KEEP_IMPORTANCE_THRESHOLD = 0.75;
+
+function normalizeAdsKeepImportanceThreshold(raw: unknown): number {
+    const numeric = typeof raw === 'number'
+        ? raw
+        : (typeof raw === 'string' ? Number.parseFloat(raw) : Number.NaN);
+    if (!Number.isFinite(numeric)) {
+        return DEFAULT_ADS_KEEP_IMPORTANCE_THRESHOLD;
+    }
+    return Math.min(1, Math.max(0, numeric));
+}
+
+function parseAccountAiFilterConfig(raw: unknown): AiFilterConfig {
+    if (typeof raw === 'string' && raw.trim()) {
+        try {
+            const parsed = JSON.parse(raw) as Record<string, unknown>;
+            return {
+                ads_keep_importance_threshold: normalizeAdsKeepImportanceThreshold(parsed.ads_keep_importance_threshold),
+            };
+        } catch {
+            return {
+                ads_keep_importance_threshold: DEFAULT_ADS_KEEP_IMPORTANCE_THRESHOLD,
+            };
+        }
+    }
+
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+        const parsed = raw as Record<string, unknown>;
+        return {
+            ads_keep_importance_threshold: normalizeAdsKeepImportanceThreshold(parsed.ads_keep_importance_threshold),
+        };
+    }
+
+    return {
+        ads_keep_importance_threshold: DEFAULT_ADS_KEEP_IMPORTANCE_THRESHOLD,
+    };
+}
+
+/**
  * 邮箱同步结果
  */
 export interface SyncResult {
@@ -333,18 +414,9 @@ export async function syncEmailAccount(env: Env, accountId: string): Promise<Syn
             } catch (e) { /* ignore */ }
         }
 
-        // Fetch AI Config from DB if Env is missing (for Spam Check & Smart Extraction)
-        let aiConfig: { apiKey?: string; provider?: string; model?: string; baseUrl?: string } | undefined = undefined;
-        if (!env.AI_API_KEY) {
-            try {
-                const savedAiConfig = await env.DB.prepare(`
-                    SELECT value FROM saved_configs WHERE user_key = ? AND category = 'ai_config' LIMIT 1
-                `).bind(account.user_key).first<{ value: string }>();
-                if (savedAiConfig) {
-                    aiConfig = JSON.parse(savedAiConfig.value);
-                }
-            } catch (e) { /* ignore */ }
-        }
+        // 优先使用账户绑定 AI 模型；无可用配置时回退用户默认模型和环境变量
+        const aiConfig = await resolveAiConfigForAccount(env, account.user_key, account.id);
+        const aiFilterConfig = parseAccountAiFilterConfig(account.ai_filter_config);
 
         // Fetch Security Rules (Blacklist & Custom Rules)
         // Global blacklist (account_id IS NULL) + Account specific
@@ -379,6 +451,7 @@ export async function syncEmailAccount(env: Env, accountId: string): Promise<Syn
         // 过滤并推送邮件
         let forwardedCount = 0;
         const autoPush = account.auto_push !== 0; // 默认为 1 (开启)
+        const requiresInlineSummary = account.enable_ai_spam_filter === 1 || autoPush;
 
         for (const email of emails) {
             const emailData: EmailData = {
@@ -395,6 +468,7 @@ export async function syncEmailAccount(env: Env, accountId: string): Promise<Syn
             const messageId = extendedData.messageId || null;
             let savedId: number | null = null;
             let isDuplicate = false;
+            let shouldQueueSummary = false;
 
             try {
                 // 尝试插入，利用 (account_id, message_id) 唯一索引去重
@@ -404,13 +478,14 @@ export async function syncEmailAccount(env: Env, accountId: string): Promise<Syn
                 // 首先检查是否存在相同的 Message-ID (仅当 Message-ID 存在时)
                 if (messageId) {
                     const existing = await env.DB.prepare(`
-                        SELECT id FROM fetched_emails WHERE account_id = ? AND message_id = ?
-                    `).bind(accountId, messageId).first<{ id: number }>();
+                        SELECT id, ai_summary FROM fetched_emails WHERE account_id = ? AND message_id = ?
+                    `).bind(accountId, messageId).first<{ id: number; ai_summary?: string | null }>();
 
                     if (existing) {
                         // console.log(`[IMAP Poller] 邮件已存在 (Message-ID): ${email.subject}`);
                         savedId = existing.id;
                         isDuplicate = true;
+                        shouldQueueSummary = !existing.ai_summary;
                     }
                 }
 
@@ -434,13 +509,19 @@ export async function syncEmailAccount(env: Env, accountId: string): Promise<Syn
                         Date.now()
                     ).first<{ id: number }>();
 
-                    if (result) savedId = result.id;
+                    if (result) {
+                        savedId = result.id;
+                        shouldQueueSummary = true;
+                    }
                     else {
                         // Insert failed
-                        const fallback = await env.DB.prepare("SELECT id FROM fetched_emails WHERE account_id = ? AND uid = ?").bind(accountId, email.uid).first<{ id: number }>();
+                        const fallback = await env.DB.prepare(`
+                            SELECT id, ai_summary FROM fetched_emails WHERE account_id = ? AND uid = ?
+                        `).bind(accountId, email.uid).first<{ id: number; ai_summary?: string | null }>();
                         if (fallback) {
                             savedId = fallback.id;
                             isDuplicate = true;
+                            shouldQueueSummary = !fallback.ai_summary;
                         }
                     }
                 }
@@ -450,6 +531,27 @@ export async function syncEmailAccount(env: Env, accountId: string): Promise<Syn
 
             if (!savedId) {
                 continue;
+            }
+
+            let summaryContext: PushSummaryContext | undefined;
+            let summaryReady = false;
+            if (requiresInlineSummary) {
+                try {
+                    const summaryResult = await getOrGenerateEmailSummaryById(env, account.user_key, String(savedId), false);
+                    summaryContext = {
+                        summary: summaryResult.result.summary,
+                        sentiment: summaryResult.result.sentiment,
+                        importance_score: summaryResult.result.importance_score,
+                        action_items: summaryResult.result.action_items,
+                    };
+                    summaryReady = true;
+                } catch (summaryError) {
+                    console.warn(`[IMAP Poller] 生成摘要失败 (email_id=${savedId})`, summaryError);
+                }
+            }
+
+            if (!summaryReady && shouldQueueSummary) {
+                await queueEmailSummaryJob(env, savedId, 1);
             }
 
             // 如果是重复邮件 (Message-ID 或 UID 已存在)，则直接跳过后续推送逻辑
@@ -478,13 +580,7 @@ export async function syncEmailAccount(env: Env, accountId: string): Promise<Syn
 
             // --- Spam & Rules Check ---
 
-            // Fetch Blacklist and Rules (Optimized: ideally strictly done once outside loop, but doing here for safety/simplicity in this edit)
-            // Note: In a high-volume scenario, move this outside the `for (const email of emails)` loop.
-            // But since 'emails' is max 20, it's okay for now, OR I will assume I fetched them outside.
-            // Let's assume I fetch them outside the loop to be correct. I will edit the outer scope in a second chunk or rely on the fact that I can't easily edit outside the chunk here.
-            // Actually, I should probably fetch them outside. But I only have one `replace_file_content` call.
-            // I will use `multi_replace_file_content`? No, stick to single chunk if I can.
-            // I'll fetch them right here for now, it's not ideal but functional.
+            // 黑名单与规则已在循环外读取，这里仅做匹配判定。
 
             // 1. 规则检查 & 安全检查
             const checkResult = shouldForwardEmail(emailData, rules, blacklistSet, customRules);
@@ -499,18 +595,17 @@ export async function syncEmailAccount(env: Env, accountId: string): Promise<Syn
 
             // 2. AI 垃圾邮件检测 (如果开启)
             if (account.enable_ai_spam_filter === 1) {
-                // Only for "unknown" senders? Or all? Let's check all for now or maybe skip whitelist.
-                // Assuming shouldForwardEmail already checked whitelist.
-                // Note: whitelist in `rules` acts as "Allow ONLY whitelist" usually.
-                // If we want "AI check unless whitelisted", that logic needs to be explicit.
-                // For now, simply run AI check.
+                const aiDecision = await checkAiSpam(env, emailData, aiConfig, summaryContext, aiFilterConfig);
+                if (aiDecision.shouldFilter) {
+                    console.log(`[IMAP Poller] 邮件被 AI 过滤: ${email.subject} (category=${aiDecision.category}, severity=${aiDecision.severity}, reason=${aiDecision.reason || '无'})`);
+                    const reasonText = [
+                        `类型=${aiDecision.category}`,
+                        `严重度=${aiDecision.severity}`,
+                        aiDecision.reason || ''
+                    ].filter(Boolean).join(' | ');
 
-                // 为了避免太慢，可以使用 Promise.race 或仅对非简短邮件检查
-                const { isSpam, reason } = await checkAiSpam(env, emailData, aiConfig);
-                if (isSpam) {
-                    console.log(`[IMAP Poller] 邮件被 AI 识别为垃圾邮件: ${email.subject} (${reason})`);
                     await env.DB.prepare("UPDATE fetched_emails SET push_status = 'filtered', push_log = ? WHERE id = ?")
-                        .bind(`AI Spam: ${reason}`, savedId).run();
+                        .bind(`AI Filter: ${reasonText}`, savedId).run();
                     continue;
                 }
             }
@@ -548,7 +643,7 @@ export async function syncEmailAccount(env: Env, accountId: string): Promise<Syn
                 updated_at: account.updated_at
             };
 
-            const pushResult = await forwardEmailToPush(env, settings, emailData, aiConfig);
+            const pushResult = await forwardEmailToPush(env, settings, emailData, aiConfig, summaryContext);
 
             // 更新本地状态
             await env.DB.prepare(`

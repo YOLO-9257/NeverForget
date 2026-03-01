@@ -1,0 +1,211 @@
+/**
+ * PushConfigTab 样式
+ * @author zhangws
+ */
+
+.section {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+}
+
+.card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 24px;
+}
+
+.cardHeader {
+    margin-bottom: 20px;
+}
+
+.cardTitle {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+}
+
+.cardSubtitle {
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    margin: 4px 0 0;
+}
+
+.formRow {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+}
+
+.formGroup {
+    margin-bottom: 16px;
+}
+
+.label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+}
+
+.input {
+    width: 100%;
+    padding: 12px 16px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    font-family: inherit;
+    font-size: 14px;
+    color: var(--text-primary);
+    transition: all var(--transition-fast);
+}
+
+.input:hover {
+    border-color: var(--border-light);
+}
+
+.input:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px var(--primary-glow);
+}
+
+.hint {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 6px;
+}
+
+/* 切换开关列表 */
+.toggleList {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.toggleItem {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 12px;
+    background: var(--bg-elevated);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: background var(--transition-fast);
+}
+
+.toggleItem:hover {
+    background: var(--bg-glass-hover);
+}
+
+.toggleItem input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    margin-top: 2px;
+    accent-color: var(--primary);
+}
+
+.toggleLabel {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.toggleTitle {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.toggleDesc {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+/* 操作按钮 */
+.actions {
+    display: flex;
+    gap: 12px;
+    margin-top: 20px;
+}
+
+.actionsSpread {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 20px;
+}
+
+.actionsLeft {
+    display: flex;
+    gap: 8px;
+}
+
+.btnPrimary,
+.btnSecondary,
+.btnGhost {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 20px;
+    border: none;
+    border-radius: var(--radius-md);
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.btnPrimary {
+    background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+    color: white;
+}
+
+.btnPrimary:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-primary);
+}
+
+.btnSecondary {
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+}
+
+.btnSecondary:hover {
+    background: var(--bg-glass-hover);
+}
+
+.btnGhost {
+    background: transparent;
+    color: var(--text-secondary);
+}
+
+.btnGhost:hover {
+    background: var(--bg-glass-hover);
+    color: var(--text-primary);
+}
+
+@media (max-width: 640px) {
+    .formRow {
+        grid-template-columns: 1fr;
+    }
+
+    .actionsSpread {
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .actionsLeft {
+        width: 100%;
+    }
+
+    .btnPrimary {
+        width: 100%;
+        justify-content: center;
+    }
+}

@@ -37,7 +37,7 @@ import {
     testEmailConnection
 } from './handlers/emailAccounts';
 import { getEmailTrend } from './handlers/statsHandler';
-import { listFetchedEmails, getFetchedEmail, pushFetchedEmail } from './handlers/fetchedEmails';
+import { listFetchedEmails, getFetchedEmail, pushFetchedEmail, updateFetchedEmailContent } from './handlers/fetchedEmails';
 import {
     listBlacklist,
     addToBlacklist,
@@ -95,6 +95,8 @@ import {
     testWorkflowRule,
     getWorkflowExecutions,
 } from './handlers/workflowRules';
+import { ensureAiActionLogsTable } from './services/aiActionLogger';
+import { ensureRemindersSchema } from './services/reminderSchema';
 
 
 
@@ -135,7 +137,7 @@ export default {
         // never-forget 仅通过 template_name 引用 go-wxpush 中的模板
 
         // 公共推送接口 (兼容 go-wxpush)
-        if (path === '/wxsend') {
+        if (path === '/wxpush') {
             return handlePublicPush(request, env);
         }
 
@@ -158,6 +160,8 @@ export default {
 
         // API 路由需要认证
         if (path.startsWith('/api/')) {
+            await ensureRemindersSchema(env);
+
             // 认证
             const authResult = await authMiddleware(request, env);
             if (authResult instanceof Response) {
@@ -176,6 +180,7 @@ export default {
      * 定时任务触发处理
      */
     async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+        await ensureRemindersSchema(env);
         await handleCron(event, env, ctx);
     },
 
@@ -342,13 +347,13 @@ async function handleApiRoutes(
     if (emailAccountMatch) {
         const id = emailAccountMatch[1];
         if (method === 'GET') {
-            return getEmailAccount(env, id);
+            return getEmailAccount(env, id, userKey);
         }
         if (method === 'PUT') {
-            return updateEmailAccount(env, id, await request.json());
+            return updateEmailAccount(env, userKey, id, await request.json());
         }
         if (method === 'DELETE') {
-            return deleteEmailAccount(env, id);
+            return deleteEmailAccount(env, id, userKey);
         }
         return badRequest('不支持的请求方法');
     }
@@ -356,7 +361,7 @@ async function handleApiRoutes(
     // 立即同步
     const emailSyncMatch = path.match(/^\/api\/email\/accounts\/([^\/]+)\/sync$/);
     if (emailSyncMatch && method === 'POST') {
-        return syncEmailAccountNow(env, emailSyncMatch[1]);
+        return syncEmailAccountNow(env, emailSyncMatch[1], userKey);
     }
 
     // 测试连接
@@ -376,19 +381,25 @@ async function handleApiRoutes(
     // 获取账户的邮件列表: /api/email/accounts/:accountId/messages
     const emailMessagesMatch = path.match(/^\/api\/email\/accounts\/([^\/]+)\/messages$/);
     if (emailMessagesMatch && method === 'GET') {
-        return listFetchedEmails(request, env);
+        return listFetchedEmails(request, env, userKey);
     }
 
     // 邮件详情: /api/email/messages/:messageId
     const emailDetailMatch = path.match(/^\/api\/email\/messages\/([^\/]+)$/);
     if (emailDetailMatch && method === 'GET') {
-        return getFetchedEmail(request, env);
+        return getFetchedEmail(request, env, userKey);
     }
 
     // 手动推送: /api/email/messages/:messageId/push
     const emailPushMatch = path.match(/^\/api\/email\/messages\/([^\/]+)\/push$/);
     if (emailPushMatch && method === 'POST') {
-        return pushFetchedEmail(request, env);
+        return pushFetchedEmail(request, env, userKey);
+    }
+
+    // 更新邮件内容: /api/email/messages/:messageId/content
+    const emailContentMatch = path.match(/^\/api\/email\/messages\/([^\/]+)\/content$/);
+    if (emailContentMatch && method === 'PUT') {
+        return updateFetchedEmailContent(request, env, userKey);
     }
 
     // ==========================================
@@ -579,10 +590,11 @@ async function handleApiRoutes(
 
 /**
  * 获取统计信息
+ * 优先从三层日志模型读取，fallback 到旧 trigger_logs
  */
 async function getStats(env: Env, userKey: string): Promise<Response> {
     try {
-        // 查询提醒任务统计
+        // 查询提醒任务统计（始终从 reminders 表读取）
         const reminderStats = await env.DB.prepare(`
             SELECT 
                 COUNT(*) as total_reminders,
@@ -600,12 +612,7 @@ async function getStats(env: Env, userKey: string): Promise<Response> {
             total_triggers: number;
         }>();
 
-        // 查询用户的所有任务 ID
-        const remindersResult = await env.DB.prepare(`
-            SELECT id FROM reminders WHERE user_key = ?
-        `).bind(userKey).all<{ id: string }>();
-        const reminderIds = (remindersResult.results || []).map(r => r.id);
-
+        // 尝试从三层日志模型读取执行统计
         let triggerStats = {
             success_triggers: 0,
             failed_triggers: 0,
@@ -614,72 +621,159 @@ async function getStats(env: Env, userKey: string): Promise<Response> {
         };
         let dailyStats: { day: string; success: number; failed: number }[] = [];
 
-        if (reminderIds.length > 0) {
-            const placeholders = reminderIds.map(() => '?').join(',');
-            const now = Date.now();
-            const SHANGHAI_OFFSET = 28800000; // 8小时 UTC+8
-            const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+        const now = Date.now();
+        const SHANGHAI_OFFSET = 28800000; // 8小时 UTC+8
+        const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+        const todayStart = now - ((now + SHANGHAI_OFFSET) % ONE_DAY_MS);
+        const weekStart = todayStart - 6 * ONE_DAY_MS;
 
-            // 计算上海时间的本日 00:00
-            const todayStart = now - ((now + SHANGHAI_OFFSET) % ONE_DAY_MS);
-            // 统计范围：今天 + 过去6天 = 7天
-            const weekStart = todayStart - 6 * ONE_DAY_MS;
+        let useNewModel = false;
 
-            // 聚合查询执行日志
-            const logStats = await env.DB.prepare(`
-                SELECT 
-                    SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as success_triggers,
-                    SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed_triggers,
-                    SUM(CASE WHEN triggered_at >= ? THEN 1 ELSE 0 END) as today_triggers,
-                    SUM(CASE WHEN triggered_at >= ? THEN 1 ELSE 0 END) as week_triggers
-                FROM trigger_logs
-                WHERE reminder_id IN (${placeholders})
-            `).bind(todayStart, weekStart, ...reminderIds).first<{
+        try {
+            // 从 task_exec_snapshot 聚合总执行次数
+            const snapshotStats = await env.DB.prepare(`
+                SELECT
+                    SUM(total_count) as total_executions,
+                    SUM(success_count) as success_triggers,
+                    SUM(failed_count) as failed_triggers
+                FROM task_exec_snapshot
+                WHERE user_key = ?
+            `).bind(userKey).first<{
+                total_executions: number;
                 success_triggers: number;
                 failed_triggers: number;
-                today_triggers: number;
-                week_triggers: number;
             }>();
 
-            if (logStats) {
-                triggerStats = {
-                    success_triggers: logStats.success_triggers || 0,
-                    failed_triggers: logStats.failed_triggers || 0,
-                    today_triggers: logStats.today_triggers || 0,
-                    week_triggers: logStats.week_triggers || 0,
-                };
-            }
+            const snapshotTotal = Number(snapshotStats?.total_executions || 0);
+            const snapshotSuccess = Number(snapshotStats?.success_triggers || 0);
+            const snapshotFailed = Number(snapshotStats?.failed_triggers || 0);
 
-            // 查询每日趋势 (使用上海时间聚合)
-            // unixepoch 接受秒数，所以 (triggered_at + offset) / 1000
-            const dailyTrendResult = await env.DB.prepare(`
-                SELECT 
-                    date((triggered_at + ?) / 1000, 'unixepoch') as day,
-                    SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as success,
-                    SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed
-                FROM trigger_logs 
-                WHERE reminder_id IN (${placeholders}) AND triggered_at >= ?
-                GROUP BY day
-                ORDER BY day ASC
-            `).bind(SHANGHAI_OFFSET, ...reminderIds, weekStart).all<{ day: string; success: number; failed: number }>();
+            // 仅当新模型已有明确的成功/失败计数时才切换，避免只初始化 total_count 导致统计失真
+            if (snapshotTotal > 0 && snapshotSuccess + snapshotFailed > 0) {
+                useNewModel = true;
 
-            // 补全缺失的日期
-            const statsMap = new Map<string, { success: number; failed: number }>();
-            (dailyTrendResult.results || []).forEach(stat => {
-                statsMap.set(stat.day, { success: stat.success, failed: stat.failed });
-            });
+                triggerStats.success_triggers = snapshotSuccess;
+                triggerStats.failed_triggers = snapshotFailed;
 
-            // 生成过去7天的时间序列 (0 到 6)
-            for (let i = 0; i < 7; i++) {
-                // 从 weekStart 开始往后推
-                const d = new Date(weekStart + i * ONE_DAY_MS + SHANGHAI_OFFSET);
-                const dayStr = d.toISOString().split('T')[0];
-                const stat = statsMap.get(dayStr) || { success: 0, failed: 0 };
-                dailyStats.push({
-                    day: dayStr,
-                    success: stat.success,
-                    failed: stat.failed
+                // 从 task_exec_rollup 获取今日执行次数
+                const todayBucketStart = (() => {
+                    const d = new Date(todayStart + SHANGHAI_OFFSET);
+                    const year = d.getUTCFullYear();
+                    const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+                    const day = String(d.getUTCDate()).padStart(2, '0');
+                    return `${year}-${month}-${day} 00`;
+                })();
+
+                const todayRollup = await env.DB.prepare(`
+                    SELECT SUM(total_count) as today
+                    FROM task_exec_rollup
+                    WHERE user_key = ? AND bucket_hour >= ?
+                `).bind(userKey, todayBucketStart).first<{ today: number }>();
+                triggerStats.today_triggers = todayRollup?.today || 0;
+
+                // 从 task_exec_rollup 获取 7 天趋势
+                const weekBucketStart = (() => {
+                    const d = new Date(weekStart + SHANGHAI_OFFSET);
+                    const year = d.getUTCFullYear();
+                    const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+                    const day = String(d.getUTCDate()).padStart(2, '0');
+                    return `${year}-${month}-${day} 00`;
+                })();
+
+                const weekRollup = await env.DB.prepare(`
+                    SELECT SUM(total_count) as week
+                    FROM task_exec_rollup
+                    WHERE user_key = ? AND bucket_hour >= ?
+                `).bind(userKey, weekBucketStart).first<{ week: number }>();
+                triggerStats.week_triggers = weekRollup?.week || 0;
+
+                // 7 天每日趋势（按 bucket_hour 的日期部分 GROUP BY）
+                const dailyTrendResult = await env.DB.prepare(`
+                    SELECT
+                        SUBSTR(bucket_hour, 1, 10) as day,
+                        SUM(success_count) as success,
+                        SUM(failed_count) as failed
+                    FROM task_exec_rollup
+                    WHERE user_key = ? AND bucket_hour >= ?
+                    GROUP BY day
+                    ORDER BY day ASC
+                `).bind(userKey, weekBucketStart).all<{ day: string; success: number; failed: number }>();
+
+                // 补全缺失的日期
+                const statsMap = new Map<string, { success: number; failed: number }>();
+                (dailyTrendResult.results || []).forEach(stat => {
+                    statsMap.set(stat.day, { success: stat.success, failed: stat.failed });
                 });
+
+                for (let i = 0; i < 7; i++) {
+                    const d = new Date(weekStart + i * ONE_DAY_MS + SHANGHAI_OFFSET);
+                    const dayStr = d.toISOString().split('T')[0];
+                    const stat = statsMap.get(dayStr) || { success: 0, failed: 0 };
+                    dailyStats.push({ day: dayStr, success: stat.success, failed: stat.failed });
+                }
+            }
+        } catch (newModelErr) {
+            console.warn('[Stats] 三层日志模型查询失败，回退到旧逻辑:', newModelErr);
+            useNewModel = false;
+        }
+
+        // Fallback: 如果三层模型没有数据，回退到旧 trigger_logs 查询
+        if (!useNewModel) {
+            const remindersResult = await env.DB.prepare(`
+                SELECT id FROM reminders WHERE user_key = ?
+            `).bind(userKey).all<{ id: string }>();
+            const reminderIds = (remindersResult.results || []).map(r => r.id);
+
+            if (reminderIds.length > 0) {
+                const placeholders = reminderIds.map(() => '?').join(',');
+
+                const logStats = await env.DB.prepare(`
+                    SELECT 
+                        SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as success_triggers,
+                        SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed_triggers,
+                        SUM(CASE WHEN triggered_at >= ? THEN 1 ELSE 0 END) as today_triggers,
+                        SUM(CASE WHEN triggered_at >= ? THEN 1 ELSE 0 END) as week_triggers
+                    FROM trigger_logs
+                    WHERE reminder_id IN (${placeholders})
+                `).bind(todayStart, weekStart, ...reminderIds).first<{
+                    success_triggers: number;
+                    failed_triggers: number;
+                    today_triggers: number;
+                    week_triggers: number;
+                }>();
+
+                if (logStats) {
+                    triggerStats = {
+                        success_triggers: logStats.success_triggers || 0,
+                        failed_triggers: logStats.failed_triggers || 0,
+                        today_triggers: logStats.today_triggers || 0,
+                        week_triggers: logStats.week_triggers || 0,
+                    };
+                }
+
+                const dailyTrendResult = await env.DB.prepare(`
+                    SELECT 
+                        date((triggered_at + ?) / 1000, 'unixepoch') as day,
+                        SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as success,
+                        SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed
+                    FROM trigger_logs 
+                    WHERE reminder_id IN (${placeholders}) AND triggered_at >= ?
+                    GROUP BY day
+                    ORDER BY day ASC
+                `).bind(SHANGHAI_OFFSET, ...reminderIds, weekStart).all<{ day: string; success: number; failed: number }>();
+
+                const statsMap = new Map<string, { success: number; failed: number }>();
+                (dailyTrendResult.results || []).forEach(stat => {
+                    statsMap.set(stat.day, { success: stat.success, failed: stat.failed });
+                });
+
+                dailyStats = [];
+                for (let i = 0; i < 7; i++) {
+                    const d = new Date(weekStart + i * ONE_DAY_MS + SHANGHAI_OFFSET);
+                    const dayStr = d.toISOString().split('T')[0];
+                    const stat = statsMap.get(dayStr) || { success: 0, failed: 0 };
+                    dailyStats.push({ day: dayStr, success: stat.success, failed: stat.failed });
+                }
             }
         }
 
@@ -708,6 +802,7 @@ async function getStats(env: Env, userKey: string): Promise<Response> {
 
 /**
  * 获取所有任务的执行日志
+ * 优先从 task_exec_detail 读取，fallback 到旧 trigger_logs
  */
 async function getAllLogs(request: Request, env: Env, userKey: string): Promise<Response> {
     try {
@@ -715,62 +810,301 @@ async function getAllLogs(request: Request, env: Env, userKey: string): Promise<
         const limit = Math.min(parseInt(url.searchParams.get('limit') || '50'), 200);
         const offset = parseInt(url.searchParams.get('offset') || '0');
         const status = url.searchParams.get('status'); // success | failed
-        const type = url.searchParams.get('type'); // reminder | email
+        const type = url.searchParams.get('type'); // reminder | email_sync
 
-        // 查询用户的所有任务 ID（如果按类型筛选，则只查询该类型的任务）
-        let remindersQuery = `SELECT id, title, type FROM reminders WHERE user_key = ?`;
-        const remindersParams: any[] = [userKey];
-        
-        if (type) {
-            remindersQuery += ` AND type = ?`;
-            remindersParams.push(type);
+        const toIso = (value: unknown): string => {
+            const numeric = typeof value === 'number' ? value : Number(value);
+            const date = Number.isFinite(numeric) ? new Date(numeric) : new Date(String(value ?? ''));
+            return Number.isNaN(date.getTime()) ? new Date(0).toISOString() : date.toISOString();
+        };
+
+        const aiLogsReady = await ensureAiActionLogsTable(env);
+
+        // 尝试从三层日志模型的 task_exec_detail 表读取
+        let useNewModel = false;
+        try {
+            // 检测 task_exec_detail 表是否存在且有数据
+            const detailCheck = await env.DB.prepare(`
+                SELECT COUNT(*) as cnt FROM task_exec_detail WHERE user_key = ? LIMIT 1
+            `).bind(userKey).first<{ cnt: number }>();
+
+            if (detailCheck && detailCheck.cnt > 0) {
+                useNewModel = true;
+            }
+        } catch {
+            // 表不存在或查询失败，使用旧逻辑
         }
-        
-        const remindersResult = await env.DB.prepare(remindersQuery)
-            .bind(...remindersParams)
-            .all<{ id: string; title: string; type: string }>();
 
-        const reminderIds = (remindersResult.results || []).map(r => r.id);
-        const reminderTitles = new Map((remindersResult.results || []).map(r => [r.id, r.title]));
-        const reminderTypes = new Map((remindersResult.results || []).map(r => [r.id, r.type]));
+        if (useNewModel) {
+            // --- 新逻辑：从 task_exec_detail 读取 ---
+            let detailQuery = `
+                SELECT * FROM (
+                    SELECT
+                        d.id AS id,
+                        d.reminder_id AS reminder_id,
+                        d.triggered_at AS triggered_at,
+                        d.status AS status,
+                        d.response AS response,
+                        d.error AS error,
+                        d.duration_ms AS duration_ms,
+                        d.detail_reason AS detail_reason,
+                        r.title AS reminder_title,
+                        r.type AS reminder_type,
+                        'scheduler' AS source,
+                        NULL AS action
+                    FROM task_exec_detail d
+                    INNER JOIN reminders r ON d.reminder_id = r.id
+                    WHERE d.user_key = ?
+                    ${type ? 'AND d.task_type = ?' : ''}
+                    ${status ? 'AND d.status = ?' : ''}
+            `;
 
-        if (reminderIds.length === 0) {
-            return success({ total: 0, items: [] });
+            // AI 管家日志部分
+            if (aiLogsReady) {
+                detailQuery += `
+                    UNION ALL
+
+                    SELECT
+                        a.id AS id,
+                        a.reminder_id AS reminder_id,
+                        a.triggered_at AS triggered_at,
+                        a.status AS status,
+                        a.response AS response,
+                        a.error AS error,
+                        a.duration_ms AS duration_ms,
+                        NULL AS detail_reason,
+                        COALESCE(a.reminder_title, '智能管家动作') AS reminder_title,
+                        COALESCE(a.reminder_type, 'reminder') AS reminder_type,
+                        'ai_butler' AS source,
+                        a.action AS action
+                    FROM ai_action_logs a
+                    WHERE a.user_key = ?
+                    ${type ? "AND COALESCE(a.reminder_type, 'reminder') = ?" : ''}
+                    ${status ? 'AND a.status = ?' : ''}
+                `;
+            }
+
+            detailQuery += `
+                ) all_logs
+                ORDER BY triggered_at DESC
+                LIMIT ? OFFSET ?
+            `;
+
+            const detailParams: unknown[] = [userKey];
+            if (type) detailParams.push(type);
+            if (status) detailParams.push(status);
+            if (aiLogsReady) {
+                detailParams.push(userKey);
+                if (type) detailParams.push(type);
+                if (status) detailParams.push(status);
+            }
+            detailParams.push(limit, offset);
+
+            const logsResult = await env.DB.prepare(detailQuery).bind(...detailParams).all();
+
+            // COUNT 查询
+            let countQuery = `
+                SELECT
+                    (
+                        SELECT COUNT(*)
+                        FROM task_exec_detail d
+                        INNER JOIN reminders r ON d.reminder_id = r.id
+                        WHERE d.user_key = ?
+                        ${type ? 'AND d.task_type = ?' : ''}
+                        ${status ? 'AND d.status = ?' : ''}
+                    )
+            `;
+
+            if (aiLogsReady) {
+                countQuery += `
+                    +
+                    (
+                        SELECT COUNT(*)
+                        FROM ai_action_logs a
+                        WHERE a.user_key = ?
+                        ${type ? "AND COALESCE(a.reminder_type, 'reminder') = ?" : ''}
+                        ${status ? 'AND a.status = ?' : ''}
+                    )
+                `;
+            }
+
+            countQuery += ` AS total`;
+
+            const countParams: unknown[] = [userKey];
+            if (type) countParams.push(type);
+            if (status) countParams.push(status);
+            if (aiLogsReady) {
+                countParams.push(userKey);
+                if (type) countParams.push(type);
+                if (status) countParams.push(status);
+            }
+
+            const countResult = await env.DB.prepare(countQuery).bind(...countParams).first<{ total: number }>();
+
+            const logs = (logsResult.results || []).map((log: any) => ({
+                ...log,
+                reminder_title: log.reminder_title || '未知任务',
+                reminder_type: log.reminder_type || 'reminder',
+                triggered_at: toIso(log.triggered_at),
+            }));
+
+            return success({
+                total: countResult?.total || 0,
+                items: logs,
+            });
         }
 
-        // 构建 IN 查询
-        const placeholders = reminderIds.map(() => '?').join(',');
-        let query = `
-            SELECT * FROM trigger_logs 
-            WHERE reminder_id IN (${placeholders})
+        // --- Fallback: 旧逻辑（从 trigger_logs 读取）---
+        if (!aiLogsReady) {
+            let remindersQuery = `SELECT id, title, type FROM reminders WHERE user_key = ?`;
+            const remindersParams: unknown[] = [userKey];
+
+            if (type) {
+                remindersQuery += ` AND type = ?`;
+                remindersParams.push(type);
+            }
+
+            const remindersResult = await env.DB.prepare(remindersQuery)
+                .bind(...remindersParams)
+                .all<{ id: string; title: string; type: string }>();
+
+            const reminderIds = (remindersResult.results || []).map(r => r.id);
+            const reminderTitles = new Map((remindersResult.results || []).map(r => [r.id, r.title]));
+            const reminderTypes = new Map((remindersResult.results || []).map(r => [r.id, r.type]));
+
+            if (reminderIds.length === 0) {
+                return success({ total: 0, items: [] });
+            }
+
+            const placeholders = reminderIds.map(() => '?').join(',');
+            let query = `
+                SELECT * FROM trigger_logs
+                WHERE reminder_id IN (${placeholders})
+            `;
+            const params: unknown[] = [...reminderIds];
+
+            if (status) {
+                query += ` AND status = ?`;
+                params.push(status);
+            }
+
+            query += ` ORDER BY triggered_at DESC LIMIT ? OFFSET ?`;
+            params.push(limit, offset);
+
+            const result = await env.DB.prepare(query).bind(...params).all();
+
+            let countQuery = `SELECT COUNT(*) as total FROM trigger_logs WHERE reminder_id IN (${placeholders})`;
+            const countParams: unknown[] = [...reminderIds];
+            if (status) {
+                countQuery += ` AND status = ?`;
+                countParams.push(status);
+            }
+
+            const countResult = await env.DB.prepare(countQuery).bind(...countParams).first<{ total: number }>();
+
+            const logs = (result.results || []).map((log: any) => ({
+                ...log,
+                reminder_title: reminderTitles.get(log.reminder_id) || '未知任务',
+                reminder_type: reminderTypes.get(log.reminder_id) || 'reminder',
+                source: 'scheduler',
+                action: null,
+                triggered_at: toIso(log.triggered_at),
+            }));
+
+            return success({
+                total: countResult?.total || 0,
+                items: logs,
+            });
+        }
+
+        const logsQuery = `
+            SELECT * FROM (
+                SELECT
+                    l.id AS id,
+                    l.reminder_id AS reminder_id,
+                    l.triggered_at AS triggered_at,
+                    l.status AS status,
+                    l.response AS response,
+                    l.error AS error,
+                    l.duration_ms AS duration_ms,
+                    NULL AS detail_reason,
+                    r.title AS reminder_title,
+                    r.type AS reminder_type,
+                    'scheduler' AS source,
+                    NULL AS action
+                FROM trigger_logs l
+                INNER JOIN reminders r ON l.reminder_id = r.id
+                WHERE r.user_key = ?
+                ${type ? `AND r.type = ?` : ''}
+                ${status ? `AND l.status = ?` : ''}
+
+                UNION ALL
+
+                SELECT
+                    a.id AS id,
+                    a.reminder_id AS reminder_id,
+                    a.triggered_at AS triggered_at,
+                    a.status AS status,
+                    a.response AS response,
+                    a.error AS error,
+                    a.duration_ms AS duration_ms,
+                    NULL AS detail_reason,
+                    COALESCE(a.reminder_title, '智能管家动作') AS reminder_title,
+                    COALESCE(a.reminder_type, 'reminder') AS reminder_type,
+                    'ai_butler' AS source,
+                    a.action AS action
+                FROM ai_action_logs a
+                WHERE a.user_key = ?
+                ${type ? `AND COALESCE(a.reminder_type, 'reminder') = ?` : ''}
+                ${status ? `AND a.status = ?` : ''}
+            ) all_logs
+            ORDER BY triggered_at DESC
+            LIMIT ? OFFSET ?
         `;
-        const params: any[] = [...reminderIds];
 
-        if (status) {
-            query += ` AND status = ?`;
-            params.push(status);
-        }
+        const logsParams: unknown[] = [userKey];
+        if (type) logsParams.push(type);
+        if (status) logsParams.push(status);
+        logsParams.push(userKey);
+        if (type) logsParams.push(type);
+        if (status) logsParams.push(status);
+        logsParams.push(limit, offset);
 
-        query += ` ORDER BY triggered_at DESC LIMIT ? OFFSET ?`;
-        params.push(limit, offset);
+        const logsResult = await env.DB.prepare(logsQuery).bind(...logsParams).all();
 
-        const result = await env.DB.prepare(query).bind(...params).all();
+        const countQuery = `
+            SELECT
+                (
+                    SELECT COUNT(*)
+                    FROM trigger_logs l
+                    INNER JOIN reminders r ON l.reminder_id = r.id
+                    WHERE r.user_key = ?
+                    ${type ? `AND r.type = ?` : ''}
+                    ${status ? `AND l.status = ?` : ''}
+                ) +
+                (
+                    SELECT COUNT(*)
+                    FROM ai_action_logs a
+                    WHERE a.user_key = ?
+                    ${type ? `AND COALESCE(a.reminder_type, 'reminder') = ?` : ''}
+                    ${status ? `AND a.status = ?` : ''}
+                ) AS total
+        `;
 
-        // 查询总数
-        let countQuery = `SELECT COUNT(*) as total FROM trigger_logs WHERE reminder_id IN (${placeholders})`;
-        const countParams: any[] = [...reminderIds];
-        if (status) {
-            countQuery += ` AND status = ?`;
-            countParams.push(status);
-        }
+        const countParams: unknown[] = [userKey];
+        if (type) countParams.push(type);
+        if (status) countParams.push(status);
+        countParams.push(userKey);
+        if (type) countParams.push(type);
+        if (status) countParams.push(status);
+
         const countResult = await env.DB.prepare(countQuery).bind(...countParams).first<{ total: number }>();
 
-        // 格式化日志，添加任务标题和类型
-        const logs = (result.results || []).map((log: any) => ({
+        const logs = (logsResult.results || []).map((log: any) => ({
             ...log,
-            reminder_title: reminderTitles.get(log.reminder_id) || '未知任务',
-            reminder_type: reminderTypes.get(log.reminder_id) || 'reminder',
-            triggered_at: new Date(log.triggered_at).toISOString(),
+            reminder_title: log.reminder_title || '未知任务',
+            reminder_type: log.reminder_type || 'reminder',
+            triggered_at: toIso(log.triggered_at),
         }));
 
         return success({

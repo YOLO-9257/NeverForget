@@ -3,9 +3,175 @@
  * @author zhangws
  */
 
-import { Env, EmailAccount, ForwardRules } from '../types';
+import { Env, EmailAccount, ForwardRules, AiFilterConfig } from '../types';
 import { error, success } from '../utils/response';
 import { encryptPassword } from '../utils/crypto';
+import { hasAiProfileForUser } from '../services/aiConfigResolver';
+
+interface EmailAccountUpsertPayload {
+    name?: string;
+    email?: string;
+    username?: string;
+    password?: string;
+    use_ssl?: boolean;
+    ai_spam_filter?: boolean;
+
+    imap_host?: string;
+    imap_port?: number;
+    imap_user?: string;
+    imap_password?: string;
+    imap_tls?: boolean;
+
+    push_config?: unknown;
+    push_url?: string | null;
+    template_name?: string | null;
+    filter_rules?: ForwardRules;
+    poll_interval?: number;
+    enable_ai_spam_filter?: boolean;
+    auto_push?: boolean;
+    enabled?: boolean;
+    ai_profile_id?: string | null;
+    ai_filter_config?: AiFilterConfig | string | null;
+    ai_ads_keep_importance_threshold?: number | string | null;
+
+    // 兼容旧参数
+    push_user_id?: string;
+    push_template_id?: string;
+    push_appid?: string;
+    push_secret?: string;
+}
+
+function pickTrimmedString(...values: Array<unknown>): string {
+    for (const value of values) {
+        if (typeof value === 'string') {
+            const trimmed = value.trim();
+            if (trimmed) {
+                return trimmed;
+            }
+        }
+    }
+    return '';
+}
+
+function parsePushConfigObject(raw: unknown): Record<string, unknown> | null {
+    if (!raw) {
+        return null;
+    }
+
+    if (typeof raw === 'string') {
+        try {
+            const parsed = JSON.parse(raw) as unknown;
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                return parsed as Record<string, unknown>;
+            }
+            return null;
+        } catch {
+            return null;
+        }
+    }
+
+    if (typeof raw === 'object' && !Array.isArray(raw)) {
+        return raw as Record<string, unknown>;
+    }
+
+    return null;
+}
+
+function normalizePushConfig(
+    seed: unknown,
+    body: Pick<EmailAccountUpsertPayload, 'push_appid' | 'push_secret' | 'push_user_id' | 'push_template_id'>
+): Record<string, unknown> | null {
+    const base = parsePushConfigObject(seed) || {};
+
+    const appid = body.push_appid !== undefined
+        ? body.push_appid.trim()
+        : (typeof base.appid === 'string' ? base.appid.trim() : '');
+    const secret = body.push_secret !== undefined
+        ? body.push_secret.trim()
+        : (typeof base.secret === 'string' ? base.secret.trim() : '');
+    const userid = body.push_user_id !== undefined
+        ? body.push_user_id.trim()
+        : (typeof base.userid === 'string' ? base.userid.trim() : '');
+    const templateId = body.push_template_id !== undefined
+        ? body.push_template_id.trim()
+        : (typeof base.template_id === 'string' ? base.template_id.trim() : '');
+
+    if (!appid && !secret && !userid && !templateId) {
+        return null;
+    }
+
+    return {
+        ...base,
+        appid,
+        secret,
+        userid,
+        template_id: templateId,
+    };
+}
+
+function normalizePollInterval(pollInterval?: number): number {
+    if (!Number.isFinite(pollInterval)) {
+        return 10;
+    }
+
+    const minutes = Math.floor(pollInterval as number);
+    if (minutes < 1) {
+        return 1;
+    }
+    if (minutes > 59) {
+        return 59;
+    }
+    return minutes;
+}
+
+const DEFAULT_ADS_KEEP_IMPORTANCE_THRESHOLD = 0.75;
+
+function parseAiFilterConfigObject(raw: unknown): Record<string, unknown> | null {
+    if (raw === null || raw === undefined) {
+        return null;
+    }
+
+    if (typeof raw === 'string') {
+        try {
+            const parsed = JSON.parse(raw) as unknown;
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                return parsed as Record<string, unknown>;
+            }
+            return null;
+        } catch {
+            return null;
+        }
+    }
+
+    if (typeof raw === 'object' && !Array.isArray(raw)) {
+        return raw as Record<string, unknown>;
+    }
+
+    return null;
+}
+
+function normalizeThreshold(raw: unknown, fallback: number): number {
+    const numeric = typeof raw === 'number'
+        ? raw
+        : (typeof raw === 'string' ? Number.parseFloat(raw) : Number.NaN);
+    if (!Number.isFinite(numeric)) {
+        return fallback;
+    }
+    return Math.min(1, Math.max(0, numeric));
+}
+
+function normalizeAiFilterConfig(seed: unknown, explicitThreshold?: unknown): AiFilterConfig {
+    const parsed = parseAiFilterConfigObject(seed);
+    const seedThreshold = parsed?.ads_keep_importance_threshold;
+    const threshold = normalizeThreshold(
+        explicitThreshold !== undefined ? explicitThreshold : seedThreshold,
+        DEFAULT_ADS_KEEP_IMPORTANCE_THRESHOLD
+    );
+
+    return {
+        ads_keep_importance_threshold: threshold,
+    };
+}
 
 /**
  * 生成唯一账户ID
@@ -24,7 +190,22 @@ export async function getEmailAccounts(env: Env, userKey: string): Promise<Respo
                    push_config, push_url, template_name, filter_rules,
                    enabled, last_sync_at, sync_status, sync_error,
                    total_synced, total_forwarded, created_at, updated_at,
-                   auto_push, enable_ai_spam_filter
+                   auto_push, enable_ai_spam_filter, ai_profile_id, ai_filter_config,
+                   COALESCE((
+                       SELECT COUNT(1)
+                       FROM fetched_emails fe
+                       WHERE fe.account_id = email_accounts.id
+                   ), 0) AS cached_email_count,
+                   COALESCE((
+                       SELECT SUM(CASE WHEN fe.push_status = 'failed' THEN 1 ELSE 0 END)
+                       FROM fetched_emails fe
+                       WHERE fe.account_id = email_accounts.id
+                   ), 0) AS failed_email_count,
+                   COALESCE((
+                       SELECT SUM(CASE WHEN fe.push_status = 'pending' THEN 1 ELSE 0 END)
+                       FROM fetched_emails fe
+                       WHERE fe.account_id = email_accounts.id
+                   ), 0) AS pending_email_count
             FROM email_accounts
             WHERE user_key = ?
             ORDER BY created_at DESC
@@ -43,17 +224,32 @@ export async function getEmailAccounts(env: Env, userKey: string): Promise<Respo
 /**
  * 获取单个邮箱账户
  */
-export async function getEmailAccount(env: Env, accountId: string): Promise<Response> {
+export async function getEmailAccount(env: Env, accountId: string, userKey: string): Promise<Response> {
     try {
         const account = await env.DB.prepare(`
             SELECT id, name, imap_host, imap_port, imap_user, imap_tls,
                    push_config, push_url, template_name, filter_rules,
                    enabled, last_sync_at, sync_status, sync_error,
                    total_synced, total_forwarded, created_at, updated_at,
-                   auto_push, enable_ai_spam_filter
+                   auto_push, enable_ai_spam_filter, ai_profile_id, ai_filter_config,
+                   COALESCE((
+                       SELECT COUNT(1)
+                       FROM fetched_emails fe
+                       WHERE fe.account_id = email_accounts.id
+                   ), 0) AS cached_email_count,
+                   COALESCE((
+                       SELECT SUM(CASE WHEN fe.push_status = 'failed' THEN 1 ELSE 0 END)
+                       FROM fetched_emails fe
+                       WHERE fe.account_id = email_accounts.id
+                   ), 0) AS failed_email_count,
+                   COALESCE((
+                       SELECT SUM(CASE WHEN fe.push_status = 'pending' THEN 1 ELSE 0 END)
+                       FROM fetched_emails fe
+                       WHERE fe.account_id = email_accounts.id
+                   ), 0) AS pending_email_count
             FROM email_accounts
-            WHERE id = ?
-        `).bind(accountId).first<EmailAccount>();
+            WHERE id = ? AND user_key = ?
+        `).bind(accountId, userKey).first<EmailAccount>();
 
         if (!account) {
             return error('账户不存在', 1, 404);
@@ -72,35 +268,58 @@ export async function getEmailAccount(env: Env, accountId: string): Promise<Resp
 export async function createEmailAccount(
     env: Env,
     userKey: string,
-    body: {
-        name: string;
-        imap_host: string;
-        imap_port?: number;
-        imap_user: string;
-        imap_password: string;
-        imap_tls?: boolean;
-        push_config?: any;
-        push_url?: string;
-        template_name?: string;
-        filter_rules?: ForwardRules;
-        poll_interval?: number; // 分钟
-        enable_ai_spam_filter?: boolean;
-        auto_push?: boolean;
-    }
+    body: EmailAccountUpsertPayload
 ): Promise<Response> {
     try {
         const accountId = generateAccountId();
         const now = Date.now();
+        const name = (body.name || '').trim();
+        const imapHost = (body.imap_host || '').trim();
+        const imapUser = pickTrimmedString(body.imap_user, body.username, body.email);
+        const imapPassword = pickTrimmedString(body.imap_password, body.password);
+        const imapPort = Number.isFinite(body.imap_port) && (body.imap_port as number) > 0
+            ? Math.floor(body.imap_port as number)
+            : 993;
+        const imapTls = body.imap_tls ?? body.use_ssl ?? true;
+        const enabled = body.enabled !== false;
+        const autoPush = body.auto_push !== false;
+        const enableAiSpamFilter = (body.enable_ai_spam_filter ?? body.ai_spam_filter) === true;
+        const pushConfig = normalizePushConfig(body.push_config, body);
+        const pushConfigJson = pushConfig ? JSON.stringify(pushConfig) : null;
+        const filterRulesJson = body.filter_rules ? JSON.stringify(body.filter_rules) : null;
+        const pushUrl = typeof body.push_url === 'string' ? body.push_url.trim() : '';
+        const templateName = typeof body.template_name === 'string' ? body.template_name.trim() : '';
+        const aiProfileId = typeof body.ai_profile_id === 'string' ? body.ai_profile_id.trim() : '';
+        const aiFilterConfig = normalizeAiFilterConfig(body.ai_filter_config, body.ai_ads_keep_importance_threshold);
+        const aiFilterConfigJson = JSON.stringify(aiFilterConfig);
+        const pollMinutes = normalizePollInterval(body.poll_interval);
+        const cronExpr = `*/${pollMinutes} * * * *`;
+        const nextTriggerAt = now + pollMinutes * 60 * 1000;
+
+        if (!name) {
+            return error('账户名称不能为空', 1, 400);
+        }
+        if (!imapHost) {
+            return error('IMAP 服务器地址不能为空', 1, 400);
+        }
+        if (!imapUser) {
+            return error('IMAP 用户名不能为空', 1, 400);
+        }
+        if (!imapPassword) {
+            return error('IMAP 密码不能为空', 1, 400);
+        }
+        if (aiProfileId) {
+            const exists = await hasAiProfileForUser(env, userKey, aiProfileId);
+            if (!exists) {
+                return error('绑定的 AI 模型不存在或不属于当前用户', 1, 400);
+            }
+        }
 
         // 加密密码
         const encryptedPassword = await encryptPassword(
-            body.imap_password,
+            imapPassword,
             env.ENCRYPTION_KEY || 'default-key'
         );
-
-        // 推送配置 JSON
-        const pushConfigJson = body.push_config ? JSON.stringify(body.push_config) : null;
-        const filterRulesJson = body.filter_rules ? JSON.stringify(body.filter_rules) : null;
 
         // 插入账户
         await env.DB.prepare(`
@@ -108,30 +327,31 @@ export async function createEmailAccount(
                 id, user_key, name,
                 imap_host, imap_port, imap_user, imap_password, imap_tls,
                 push_config, push_url, template_name, filter_rules,
-                enabled, sync_status, created_at, updated_at, enable_ai_spam_filter, auto_push
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'idle', ?, ?, ?, ?)
+                enabled, sync_status, created_at, updated_at, enable_ai_spam_filter, auto_push, ai_profile_id, ai_filter_config
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle', ?, ?, ?, ?, ?, ?)
         `).bind(
             accountId,
             userKey,
-            body.name,
-            body.imap_host,
-            body.imap_port || 993,
-            body.imap_user,
+            name,
+            imapHost,
+            imapPort,
+            imapUser,
             encryptedPassword,
-            body.imap_tls !== false ? 1 : 0,
+            imapTls ? 1 : 0,
             pushConfigJson,
-            body.push_url || null,
-            body.template_name || null,
+            pushUrl || null,
+            templateName || null,
             filterRulesJson,
+            enabled ? 1 : 0,
             now,
             now,
-            body.enable_ai_spam_filter ? 1 : 0,
-            body.auto_push !== false ? 1 : 0
+            enableAiSpamFilter ? 1 : 0,
+            autoPush ? 1 : 0,
+            aiProfileId || null,
+            aiFilterConfigJson
         ).run();
 
         // 创建对应的定时任务（默认每 10 分钟）
-        const pollMinutes = body.poll_interval || 10;
-        const cronExpr = `*/${pollMinutes} * * * *`;
         const reminderId = 'rem_' + Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
 
         await env.DB.prepare(`
@@ -139,15 +359,18 @@ export async function createEmailAccount(
                 id, user_key, title, content,
                 schedule_type, schedule_cron, timezone,
                 push_config, status, type, related_id,
+                next_trigger_at, trigger_count,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, 'cron', ?, 'Asia/Shanghai', '{}', 'active', 'email_sync', ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, 'cron', ?, 'Asia/Shanghai', '{}', ?, 'email_sync', ?, ?, 0, ?, ?)
         `).bind(
             reminderId,
             userKey,
-            `📧 邮箱同步: ${body.name}`,
-            `自动同步 ${body.imap_user}`,
+            `📧 邮箱同步: ${name}`,
+            `自动同步 ${imapUser}`,
             cronExpr,
+            enabled ? 'active' : 'paused',
             accountId,
+            nextTriggerAt,
             now,
             now
         ).run();
@@ -164,70 +387,79 @@ export async function createEmailAccount(
  */
 export async function updateEmailAccount(
     env: Env,
+    userKey: string,
     accountId: string,
-    body: {
-        name?: string;
-        imap_host?: string;
-        imap_port?: number;
-        imap_user?: string;
-        imap_password?: string;
-        imap_tls?: boolean;
-        push_config?: any;
-        push_url?: string;
-        template_name?: string;
-        filter_rules?: ForwardRules;
-        enabled?: boolean;
-        poll_interval?: number;
-        enable_ai_spam_filter?: boolean;
-        auto_push?: boolean;
-    }
+    body: EmailAccountUpsertPayload
 ): Promise<Response> {
     try {
         const now = Date.now();
+        const existing = await env.DB.prepare(`
+            SELECT id, push_config, ai_filter_config FROM email_accounts WHERE id = ? AND user_key = ?
+        `).bind(accountId, userKey).first<{ id: string; push_config: string | null; ai_filter_config: string | null }>();
+
+        if (!existing) {
+            return error('账户不存在', 1, 404);
+        }
 
         // 构建动态 UPDATE
         const updates: string[] = [];
-        const values: any[] = [];
+        const values: unknown[] = [];
 
         if (body.name !== undefined) {
             updates.push('name = ?');
-            values.push(body.name);
+            values.push(body.name.trim());
         }
         if (body.imap_host !== undefined) {
             updates.push('imap_host = ?');
-            values.push(body.imap_host);
+            values.push(body.imap_host.trim());
         }
         if (body.imap_port !== undefined) {
             updates.push('imap_port = ?');
-            values.push(body.imap_port);
+            const safePort = Number.isFinite(body.imap_port) && (body.imap_port as number) > 0
+                ? Math.floor(body.imap_port as number)
+                : 993;
+            values.push(safePort);
         }
-        if (body.imap_user !== undefined) {
+        if (body.imap_user !== undefined || body.username !== undefined || body.email !== undefined) {
+            const imapUser = pickTrimmedString(body.imap_user, body.username, body.email);
             updates.push('imap_user = ?');
-            values.push(body.imap_user);
+            values.push(imapUser);
         }
-        if (body.imap_password !== undefined) {
+        if (body.imap_password !== undefined || body.password !== undefined) {
+            const plainPassword = pickTrimmedString(body.imap_password, body.password);
+            if (!plainPassword) {
+                return error('IMAP 密码不能为空', 1, 400);
+            }
             const encrypted = await encryptPassword(
-                body.imap_password,
+                plainPassword,
                 env.ENCRYPTION_KEY || 'default-key'
             );
             updates.push('imap_password = ?');
             values.push(encrypted);
         }
-        if (body.imap_tls !== undefined) {
+        if (body.imap_tls !== undefined || body.use_ssl !== undefined) {
+            const imapTls = body.imap_tls ?? body.use_ssl ?? true;
             updates.push('imap_tls = ?');
-            values.push(body.imap_tls ? 1 : 0);
+            values.push(imapTls ? 1 : 0);
         }
-        if (body.push_config !== undefined) {
+        const hasPushConfigInput = body.push_config !== undefined
+            || body.push_user_id !== undefined
+            || body.push_template_id !== undefined
+            || body.push_appid !== undefined
+            || body.push_secret !== undefined;
+        if (hasPushConfigInput) {
+            const seed = body.push_config !== undefined ? body.push_config : existing.push_config;
+            const mergedPushConfig = normalizePushConfig(seed, body);
             updates.push('push_config = ?');
-            values.push(JSON.stringify(body.push_config));
+            values.push(mergedPushConfig ? JSON.stringify(mergedPushConfig) : null);
         }
         if (body.push_url !== undefined) {
             updates.push('push_url = ?');
-            values.push(body.push_url);
+            values.push(body.push_url?.trim() || null);
         }
         if (body.template_name !== undefined) {
             updates.push('template_name = ?');
-            values.push(body.template_name);
+            values.push(body.template_name?.trim() || null);
         }
         if (body.filter_rules !== undefined) {
             updates.push('filter_rules = ?');
@@ -237,43 +469,79 @@ export async function updateEmailAccount(
             updates.push('enabled = ?');
             values.push(body.enabled ? 1 : 0);
         }
-        if (body.enable_ai_spam_filter !== undefined) {
+        if (body.enable_ai_spam_filter !== undefined || body.ai_spam_filter !== undefined) {
+            const enableAiSpamFilter = body.enable_ai_spam_filter ?? body.ai_spam_filter ?? false;
             updates.push('enable_ai_spam_filter = ?');
-            values.push(body.enable_ai_spam_filter ? 1 : 0);
+            values.push(enableAiSpamFilter ? 1 : 0);
         }
         if (body.auto_push !== undefined) {
             updates.push('auto_push = ?');
             values.push(body.auto_push ? 1 : 0);
         }
+        if (body.ai_profile_id !== undefined) {
+            const aiProfileId = typeof body.ai_profile_id === 'string' ? body.ai_profile_id.trim() : '';
+            if (aiProfileId) {
+                const exists = await hasAiProfileForUser(env, userKey, aiProfileId);
+                if (!exists) {
+                    return error('绑定的 AI 模型不存在或不属于当前用户', 1, 400);
+                }
+            }
+            updates.push('ai_profile_id = ?');
+            values.push(aiProfileId || null);
+        }
+        if (body.ai_filter_config !== undefined || body.ai_ads_keep_importance_threshold !== undefined) {
+            if (body.ai_filter_config === null) {
+                updates.push('ai_filter_config = ?');
+                values.push(null);
+            } else {
+                const seed = body.ai_filter_config !== undefined ? body.ai_filter_config : existing.ai_filter_config;
+                const normalizedConfig = normalizeAiFilterConfig(seed, body.ai_ads_keep_importance_threshold);
+                updates.push('ai_filter_config = ?');
+                values.push(JSON.stringify(normalizedConfig));
+            }
+        }
 
         updates.push('updated_at = ?');
         values.push(now);
         values.push(accountId);
+        values.push(userKey);
 
         if (updates.length === 1) {
             return error('没有需要更新的字段', 1, 400);
         }
 
-        await env.DB.prepare(`
-            UPDATE email_accounts SET ${updates.join(', ')} WHERE id = ?
+        const updateResult = await env.DB.prepare(`
+            UPDATE email_accounts SET ${updates.join(', ')} WHERE id = ? AND user_key = ?
         `).bind(...values).run();
+
+        if (updateResult.meta.changes === 0) {
+            return error('账户不存在', 1, 404);
+        }
 
         // 如果修改了轮询间隔，同步更新 reminders 表
         if (body.poll_interval !== undefined) {
-            const cronExpr = `*/${body.poll_interval} * * * *`;
+            const pollMinutes = normalizePollInterval(body.poll_interval);
+            const cronExpr = `*/${pollMinutes} * * * *`;
+            const nextTriggerAt = now + pollMinutes * 60 * 1000;
             await env.DB.prepare(`
-                UPDATE reminders SET schedule_cron = ?, updated_at = ?
-                WHERE type = 'email_sync' AND related_id = ?
-            `).bind(cronExpr, now, accountId).run();
+                UPDATE reminders SET schedule_cron = ?, next_trigger_at = ?, updated_at = ?
+                WHERE type = 'email_sync' AND related_id = ? AND user_key = ?
+            `).bind(cronExpr, nextTriggerAt, now, accountId, userKey).run();
         }
 
         // 如果启用/禁用账户，同步更新任务状态
         if (body.enabled !== undefined) {
             const taskStatus = body.enabled ? 'active' : 'paused';
             await env.DB.prepare(`
-                UPDATE reminders SET status = ?, updated_at = ?
-                WHERE type = 'email_sync' AND related_id = ?
-            `).bind(taskStatus, now, accountId).run();
+                UPDATE reminders 
+                SET status = ?, 
+                    next_trigger_at = CASE 
+                        WHEN ? = 'active' THEN COALESCE(next_trigger_at, ?)
+                        ELSE next_trigger_at
+                    END,
+                    updated_at = ?
+                WHERE type = 'email_sync' AND related_id = ? AND user_key = ?
+            `).bind(taskStatus, taskStatus, now + 60000, now, accountId, userKey).run();
         }
 
         return success(null, '账户更新成功');
@@ -286,17 +554,17 @@ export async function updateEmailAccount(
 /**
  * 删除邮箱账户
  */
-export async function deleteEmailAccount(env: Env, accountId: string): Promise<Response> {
+export async function deleteEmailAccount(env: Env, accountId: string, userKey: string): Promise<Response> {
     try {
         // 先删除关联的定时任务
         await env.DB.prepare(`
-            DELETE FROM reminders WHERE type = 'email_sync' AND related_id = ?
-        `).bind(accountId).run();
+            DELETE FROM reminders WHERE type = 'email_sync' AND related_id = ? AND user_key = ?
+        `).bind(accountId, userKey).run();
 
         // 再删除账户
         const result = await env.DB.prepare(`
-            DELETE FROM email_accounts WHERE id = ?
-        `).bind(accountId).run();
+            DELETE FROM email_accounts WHERE id = ? AND user_key = ?
+        `).bind(accountId, userKey).run();
 
         if (result.meta.changes === 0) {
             return error('账户不存在', 1, 404);
@@ -312,12 +580,12 @@ export async function deleteEmailAccount(env: Env, accountId: string): Promise<R
 /**
  * 立即同步邮箱
  */
-export async function syncEmailAccountNow(env: Env, accountId: string): Promise<Response> {
+export async function syncEmailAccountNow(env: Env, accountId: string, userKey: string): Promise<Response> {
     try {
         // 检查账户是否存在
         const account = await env.DB.prepare(`
-            SELECT * FROM email_accounts WHERE id = ?
-        `).bind(accountId).first<EmailAccount>();
+            SELECT * FROM email_accounts WHERE id = ? AND user_key = ?
+        `).bind(accountId, userKey).first<EmailAccount>();
 
         if (!account) {
             return error('账户不存在', 1, 404);
@@ -333,6 +601,16 @@ export async function syncEmailAccountNow(env: Env, accountId: string): Promise<
         const result = await syncEmailAccount(env, accountId);
 
         if (result.success) {
+            // 手动同步后优先消费一小批 AI 摘要任务，提高“点开即看”概率
+            if (result.emailsFound > 0) {
+                try {
+                    const { processAIQueue } = await import('./emailAiSummary');
+                    await processAIQueue(env, Math.min(result.emailsFound, 6));
+                } catch (queueError) {
+                    console.warn('[EmailAccounts] 手动同步后处理AI队列失败:', queueError);
+                }
+            }
+
             return success({
                 account_id: accountId,
                 status: 'idle',

@@ -1,0 +1,65 @@
+/**
+ * Login 页面样式
+ * @author zhangws
+ */
+
+/* 错误提示框 */
+.errorAlert {
+    padding: 12px var(--space-md);
+    border-radius: var(--radius-md);
+    margin-bottom: 20px;
+    background: hsla(0, 75%, 55%, 0.15);
+    border: 1px solid var(--error);
+    color: var(--error);
+    font-size: var(--text-sm);
+}
+
+/* 状态提示区域 */
+.statusHint {
+    margin-bottom: var(--space-md);
+}
+
+/* 检测中提示 */
+.checkingText {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+}
+
+/* 欢迎回来提示 */
+.welcomeText {
+    font-size: var(--text-xs);
+    color: var(--success);
+    margin-bottom: var(--space-sm);
+}
+
+/* 初始化提示 */
+.setupText {
+    font-size: var(--text-xs);
+    color: var(--primary);
+    margin-bottom: var(--space-sm);
+}
+
+/* 提交按钮 */
+.submitButton {
+    width: 100%;
+    margin-bottom: 12px;
+}
+
+/* 底部链接区域 */
+.footer {
+    margin-top: var(--space-lg);
+    padding-top: var(--space-lg);
+    border-top: 1px solid var(--border);
+    font-size: 13px;
+    color: var(--text-muted);
+    text-align: center;
+}
+
+.footer p {
+    margin-top: var(--space-sm);
+}
+
+/* 底部链接颜色 */
+.footerLink {
+    color: var(--primary-light);
+}

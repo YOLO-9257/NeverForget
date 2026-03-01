@@ -134,12 +134,71 @@ export interface ReminderListItem {
 // 执行日志
 export interface TriggerLog {
     id: number;
-    reminder_id: string;
+    reminder_id: string | null;
     triggered_at: number;
     status: 'success' | 'failed';
     response: string | null;
     error: string | null;
     duration_ms: number | null;
+    source?: 'scheduler' | 'ai_butler';
+    action?: string | null;
+    detail_reason?: string | null;  // 三层日志写入原因
+}
+
+// ==========================================
+// 三层日志模型类型
+// ==========================================
+
+// 任务执行快照（每任务 1 行）
+export interface TaskExecSnapshot {
+    reminder_id: string;
+    user_key: string;
+    last_status: 'success' | 'failed' | null;
+    last_error: string | null;
+    last_duration_ms: number;
+    last_exec_at: number | null;
+    last_success_at: number | null;
+    total_count: number;
+    success_count: number;
+    failed_count: number;
+    consecutive_failures: number;
+    is_escalated: number;
+    escalated_until: number | null;
+    updated_at: number;
+}
+
+// 执行聚合统计（按小时）
+export interface TaskExecRollup {
+    id: number;
+    reminder_id: string;
+    user_key: string;
+    task_type: 'reminder' | 'email_sync';
+    bucket_hour: string;
+    total_count: number;
+    success_count: number;
+    failed_count: number;
+    slow_count: number;
+    avg_duration_ms: number;
+    max_duration_ms: number;
+    min_duration_ms: number;
+    total_duration_ms: number;
+    error_types: string | null;
+    updated_at: number;
+}
+
+// 执行明细（条件写入）
+export interface TaskExecDetail {
+    id: number;
+    reminder_id: string;
+    user_key: string;
+    task_type: 'reminder' | 'email_sync';
+    triggered_at: number;
+    status: 'success' | 'failed';
+    response: string | null;
+    error: string | null;
+    duration_ms: number;
+    detail_reason: 'once' | 'failed' | 'slow' | 'escalated' | 'sampled' | 'heartbeat' | 'manual';
+    created_at: number;
 }
 
 // API 统一响应格式
@@ -219,6 +278,11 @@ export interface EmailForwardLog {
 }
 
 // 邮箱账户（新数据库模型）
+export interface AiFilterConfig {
+    // 广告邮件在中严重度时，达到该重要度阈值将保留而不过滤（0~1）
+    ads_keep_importance_threshold?: number;
+}
+
 export interface EmailAccount {
     id: string;
     user_key: string;
@@ -246,6 +310,9 @@ export interface EmailAccount {
     sync_error: string | null;
     total_synced: number;
     total_forwarded: number;
+    cached_email_count?: number;
+    failed_email_count?: number;
+    pending_email_count?: number;
 
     // 元数据
     created_at: number;
@@ -254,6 +321,8 @@ export interface EmailAccount {
     // 新增设置
     auto_push?: number;             // 0 | 1, 默认 1
     enable_ai_spam_filter?: number; // 0 | 1, 默认 0
+    ai_profile_id?: string | null;  // 绑定的 AI 模型配置 ID
+    ai_filter_config?: string | null; // JSON: AiFilterConfig
 }
 
 // 缓存的邮件内容（数据库模型）
@@ -269,6 +338,12 @@ export interface FetchedEmail {
     is_pushed: number;              // 0 | 1
     push_status: 'pending' | 'success' | 'failed' | 'skipped' | 'filtered';
     push_log: string | null;
+    ai_summary?: string | null;
+    ai_entities?: string | null;
+    ai_action_items?: string | null;
+    ai_sentiment?: 'urgent' | 'normal' | 'low' | null;
+    ai_importance_score?: number | null;
+    ai_processed_at?: number | null;
 }
 
 // 任务类型
@@ -659,4 +734,3 @@ export interface WebhookDelivery {
     delivered_at?: number;
     failed_at?: number;
 }
-

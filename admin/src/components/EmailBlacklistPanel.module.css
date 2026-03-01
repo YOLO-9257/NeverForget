@@ -1,0 +1,69 @@
+/* EmailBlacklistPanel.module.css - 邮件黑名单面板样式 */
+
+.header {
+    margin-bottom: 24px;
+}
+
+.card {
+    padding: 20px;
+}
+
+.inputRow {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+.emailInput {
+    max-width: 400px;
+}
+
+.table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.tableHead {
+    border-bottom: 1px solid var(--border-default);
+    text-align: left;
+    color: var(--text-secondary);
+}
+
+.th {
+    padding: 12px;
+    font-weight: 500;
+    font-size: 0.875rem;
+}
+
+.thActions {
+    text-align: right;
+}
+
+.td {
+    padding: 12px;
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.tdTime {
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+.tdActions {
+    text-align: right;
+}
+
+.emptyRow {
+    padding: 24px;
+    text-align: center;
+    color: var(--text-secondary);
+}
+
+.removeBtn {
+    color: var(--danger);
+    padding: 4px 8px;
+}
+
+.removeBtn:hover {
+    background: rgba(239, 68, 68, 0.1);
+}

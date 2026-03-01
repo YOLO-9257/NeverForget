@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import styles from './EmailBlacklistPanel.module.css';
 
 interface BlacklistItem {
     id: number;
@@ -15,11 +16,7 @@ export function EmailBlacklistPanel() {
     const token = localStorage.getItem('auth_token');
     const apiUrl = localStorage.getItem('api_url') || '';
 
-    useEffect(() => {
-        fetchItems();
-    }, []);
-
-    const fetchItems = async () => {
+    const fetchItems = useCallback(async () => {
         setLoading(true);
         try {
             const res = await fetch(`${apiUrl}/api/email/blacklist`, {
@@ -29,7 +26,11 @@ export function EmailBlacklistPanel() {
             if (json.code === 0) setItems(json.data);
         } catch (e) { console.error(e); }
         finally { setLoading(false); }
-    };
+    }, [apiUrl, token]);
+
+    useEffect(() => {
+        void fetchItems();
+    }, [fetchItems]);
 
     const handleAdd = async () => {
         if (!email) return;
@@ -42,7 +43,7 @@ export function EmailBlacklistPanel() {
             const json = await res.json();
             if (json.code === 0) {
                 setEmail('');
-                fetchItems();
+                await fetchItems();
             } else {
                 alert(json.message || 'Add failed');
             }
@@ -56,50 +57,56 @@ export function EmailBlacklistPanel() {
                 method: 'DELETE',
                 headers: { 'Authorization': `Bearer ${token}` }
             });
-            if (res.ok) fetchItems();
+            if (res.ok) await fetchItems();
         } catch (e) { alert(String(e)); }
     };
 
     return (
         <div>
-            <div style={{ marginBottom: '24px' }}>
+            <div className={styles.header}>
                 <h3 className="card-title">🚫 邮件黑名单</h3>
                 <p className="card-subtitle">在此列表中的发件人邮件将被自动屏蔽，不会推送通知。</p>
             </div>
 
-            <div className="card" style={{ padding: '20px' }}>
-                <div style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}>
+            <div className={`card ${styles.card}`}>
+                <div className={styles.inputRow}>
                     <input
-                        className="input"
+                        className={`form-input ${styles.emailInput}`}
                         value={email}
                         onChange={e => setEmail(e.target.value)}
                         placeholder="输入要屏蔽的邮箱地址 (例如 spam@example.com)"
-                        style={{ maxWidth: '400px' }}
                     />
-                    <button className="btn btn-primary" onClick={handleAdd} disabled={!email}>添加屏蔽</button>
+                    <button className="btn btn-primary" onClick={handleAdd} disabled={!email}>
+                        添加屏蔽
+                    </button>
                 </div>
 
-                {loading ? <div className="loading"><div className="spinner" /></div> : (
-                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                {loading ? (
+                    <div className="loading"><div className="spinner" /></div>
+                ) : (
+                    <table className={styles.table}>
                         <thead>
-                            <tr style={{ borderBottom: '1px solid var(--border)', textAlign: 'left', color: 'var(--text-secondary)' }}>
-                                <th style={{ padding: '12px' }}>邮箱地址</th>
-                                <th style={{ padding: '12px' }}>添加时间</th>
-                                <th style={{ padding: '12px', textAlign: 'right' }}>操作</th>
+                            <tr className={styles.tableHead}>
+                                <th className={styles.th}>邮箱地址</th>
+                                <th className={styles.th}>添加时间</th>
+                                <th className={`${styles.th} ${styles.thActions}`}>操作</th>
                             </tr>
                         </thead>
                         <tbody>
                             {items.length === 0 ? (
-                                <tr><td colSpan={3} style={{ padding: '24px', textAlign: 'center', color: 'var(--text-secondary)' }}>暂无黑名单数据</td></tr>
+                                <tr>
+                                    <td colSpan={3} className={styles.emptyRow}>暂无黑名单数据</td>
+                                </tr>
                             ) : items.map(item => (
-                                <tr key={item.id} style={{ borderBottom: '1px solid var(--border-light)' }}>
-                                    <td style={{ padding: '12px' }}>{item.email_address}</td>
-                                    <td style={{ padding: '12px', color: 'var(--text-secondary)', fontSize: '13px' }}>{new Date(item.created_at).toLocaleString()}</td>
-                                    <td style={{ padding: '12px', textAlign: 'right' }}>
+                                <tr key={item.id}>
+                                    <td className={styles.td}>{item.email_address}</td>
+                                    <td className={`${styles.td} ${styles.tdTime}`}>
+                                        {new Date(item.created_at).toLocaleString()}
+                                    </td>
+                                    <td className={`${styles.td} ${styles.tdActions}`}>
                                         <button
-                                            className="btn btn-ghost"
+                                            className={`btn btn-ghost ${styles.removeBtn}`}
                                             onClick={() => handleDelete(item.id)}
-                                            style={{ color: 'var(--error)', padding: '4px 8px' }}
                                         >
                                             移除
                                         </button>

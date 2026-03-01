@@ -6,10 +6,20 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "db:init": "wrangler d1 execute reminder-db --file=./migrations/0001_init.sql",
+    "typecheck": "tsc --noEmit",
+    "lint": "npm run typecheck",
+    "build": "npm run typecheck",
+    "test": "tsx --test tests/**/*.test.ts",
+    "db:init": "wrangler d1 execute reminder-db --remote --file=./migrations/0001_init.sql",
     "db:init:local": "wrangler d1 execute reminder-db --local --file=./migrations/0001_init.sql",
-    "db:migrate:template-name": "wrangler d1 execute reminder-db --file=./migrations/0002_add_template_name.sql",
-    "db:migrate:template-name:local": "wrangler d1 execute reminder-db --local --file=./migrations/0002_add_template_name.sql"
+    "db:migrate:template-name": "wrangler d1 execute reminder-db --remote --file=./migrations/0002_add_template_name.sql",
+    "db:migrate:template-name:local": "wrangler d1 execute reminder-db --local --file=./migrations/0002_add_template_name.sql",
+    "db:migrate:exec-log": "wrangler d1 execute reminder-db --remote --file=./migrations/0024_exec_log_refactor.sql",
+    "db:migrate:exec-log:local": "wrangler d1 execute reminder-db --local --file=./migrations/0024_exec_log_refactor.sql",
+    "db:migrate:exec-log:fix": "wrangler d1 execute reminder-db --remote --file=./migrations/0025_fix_exec_snapshot_backfill.sql",
+    "db:migrate:exec-log:fix:local": "wrangler d1 execute reminder-db --local --file=./migrations/0025_fix_exec_snapshot_backfill.sql",
+    "db:migrate:exec-log:all": "npm run db:migrate:exec-log && npm run db:migrate:exec-log:fix",
+    "db:migrate:exec-log:all:local": "npm run db:migrate:exec-log:local && npm run db:migrate:exec-log:fix:local"
   },
   "keywords": [
     "cloudflare-workers",
@@ -21,6 +31,7 @@
   "license": "MIT",
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240117.0",
+    "tsx": "^4.20.6",
     "typescript": "^5.3.3",
     "wrangler": "^4.60.0"
   },

@@ -1,0 +1,99 @@
+/**
+ * CreateTask 主样式
+ * @author zhangws
+ */
+
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 40px;
+}
+
+/* 页面标题 */
+.header {
+    margin-bottom: 32px;
+}
+
+.headerContent {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.backBtn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    background: var(--bg-glass);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
+    font-size: 18px;
+    color: var(--text-secondary);
+    text-decoration: none;
+    transition: all var(--transition-fast);
+}
+
+.backBtn:hover {
+    background: var(--bg-glass-hover);
+    border-color: var(--glass-border-hover);
+    color: var(--text-primary);
+}
+
+.title {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin: 0;
+}
+
+.subtitle {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    margin: 4px 0 0;
+}
+
+/* 错误提示 */
+.alert {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 18px;
+    background: hsla(345, 95%, 55%, 0.1);
+    border: 1px solid var(--error);
+    border-radius: var(--radius-md);
+    margin-bottom: 24px;
+    color: var(--error);
+    font-size: 14px;
+}
+
+.alert button {
+    margin-left: auto;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    font-size: 18px;
+    color: var(--error);
+    cursor: pointer;
+    transition: background var(--transition-fast);
+}
+
+.alert button:hover {
+    background: hsla(345, 95%, 55%, 0.15);
+}
+
+@media (max-width: 768px) {
+    .container {
+        padding: 16px;
+    }
+
+    .title {
+        font-size: 1.25rem;
+    }
+}

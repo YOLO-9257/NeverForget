@@ -1,0 +1,318 @@
+/* NlpInput.module.css - NLP 智能输入组件样式 */
+
+.container {
+    background: linear-gradient(135deg, var(--bg-elevated) 0%, hsl(245 30% 15%) 100%);
+    border-radius: var(--radius-lg);
+    padding: 24px;
+    border: 1px solid var(--border-default);
+    box-shadow: var(--shadow-lg);
+}
+
+.header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 20px;
+}
+
+.icon {
+    font-size: 28px;
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.1); }
+}
+
+.title {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+    flex: 1;
+}
+
+.closeBtn {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: 20px;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: var(--radius-sm);
+    transition: all var(--transition-fast);
+}
+
+.closeBtn:hover {
+    background: var(--bg-surface);
+    color: var(--text-primary);
+}
+
+.inputWrapper {
+    margin-bottom: 16px;
+}
+
+.textarea {
+    width: 100%;
+    background: var(--bg-base);
+    border: 2px solid var(--border-default);
+    border-radius: var(--radius-md);
+    padding: 16px;
+    font-size: 15px;
+    color: var(--text-primary);
+    resize: none;
+    transition: all var(--transition-normal);
+    font-family: inherit;
+}
+
+.textarea:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px var(--primary-glow);
+}
+
+.textarea::placeholder {
+    color: var(--text-muted);
+    opacity: 0.7;
+}
+
+/* AI 增强开关 */
+.aiToggle {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 12px;
+    padding: 12px 16px;
+    background: rgba(99, 102, 241, 0.1);
+    border-radius: var(--radius-md);
+    border: 1px solid rgba(99, 102, 241, 0.2);
+}
+
+.toggleSwitch {
+    position: relative;
+    display: inline-block;
+    width: 44px;
+    height: 24px;
+}
+
+.toggleSwitch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.toggleSlider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: var(--bg-base);
+    border-radius: 24px;
+    transition: var(--transition-normal);
+    border: 1px solid var(--border-default);
+}
+
+.toggleSlider::before {
+    position: absolute;
+    content: "";
+    height: 18px;
+    width: 18px;
+    left: 2px;
+    bottom: 2px;
+    background-color: var(--text-muted);
+    border-radius: 50%;
+    transition: var(--transition-normal);
+}
+
+.toggleSwitch input:checked + .toggleSlider {
+    background-color: var(--primary);
+    border-color: var(--primary);
+}
+
+.toggleSwitch input:checked + .toggleSlider::before {
+    transform: translateX(20px);
+    background-color: white;
+}
+
+.toggleLabel {
+    font-size: 14px;
+    color: var(--text-primary);
+    flex: 1;
+}
+
+.aiBadge {
+    display: inline-block;
+    animation: sparkle 1.5s ease-in-out infinite;
+}
+
+@keyframes sparkle {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.7; transform: scale(1.2); }
+}
+
+.configHint {
+    margin-top: 12px;
+    padding: 10px 14px;
+    background: rgba(251, 191, 36, 0.1);
+    border-radius: var(--radius-md);
+    font-size: 13px;
+    color: var(--warning);
+    border: 1px solid rgba(251, 191, 36, 0.2);
+}
+
+/* 解析结果 */
+.result {
+    margin-bottom: 16px;
+    padding: 16px;
+    border-radius: var(--radius-md);
+    animation: fadeIn 0.3s ease;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.resultSuccess {
+    background: linear-gradient(135deg, rgba(16, 185, 129, 0.1) 0%, rgba(16, 185, 129, 0.05) 100%);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.resultError {
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.resultHeader {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.resultIcon {
+    font-size: 18px;
+}
+
+.resultTitle {
+    font-weight: 600;
+    color: var(--text-primary);
+    flex: 1;
+}
+
+.confidence {
+    font-size: 12px;
+    color: var(--text-muted);
+    background: var(--bg-base);
+    padding: 4px 8px;
+    border-radius: 12px;
+}
+
+.resultBody {
+    display: grid;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.resultItem {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.resultLabel {
+    font-size: 13px;
+    color: var(--text-muted);
+    min-width: 80px;
+}
+
+.resultValue {
+    font-size: 14px;
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+.resultSummary {
+    padding: 10px 14px;
+    background: var(--bg-base);
+    border-radius: var(--radius-md);
+    font-size: 14px;
+    color: var(--primary);
+    font-weight: 500;
+}
+
+.resultErrorText {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--danger);
+}
+
+/* 快捷示例 */
+.examples {
+    margin-bottom: 20px;
+}
+
+.examplesLabel {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-right: 8px;
+}
+
+.examplesList {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.exampleChip {
+    background: var(--bg-base);
+    border: 1px solid var(--border-default);
+    border-radius: 20px;
+    padding: 6px 14px;
+    font-size: 13px;
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.exampleChip:hover {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: white;
+    transform: translateY(-2px);
+}
+
+/* 操作按钮 */
+.actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border-default);
+}
+
+/* 响应式 */
+@media (max-width: 640px) {
+    .container {
+        padding: 16px;
+    }
+
+    .aiToggle {
+        flex-wrap: wrap;
+    }
+
+    .examplesList {
+        overflow-x: auto;
+        flex-wrap: nowrap;
+        padding-bottom: 8px;
+    }
+
+    .exampleChip {
+        white-space: nowrap;
+    }
+}

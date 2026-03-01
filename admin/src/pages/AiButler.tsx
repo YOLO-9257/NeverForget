@@ -1,10 +1,19 @@
 import { useState, useEffect, useRef } from 'react';
+import { Button } from '../components/shared';
 import { aiChatApi } from '../api';
 import { getAiProfiles } from '../utils/ai';
+import { MarkdownRenderer } from '../components/common/MarkdownRenderer';
+import styles from './AiButler.module.css';
 
 interface Message {
     role: 'user' | 'model' | 'system';
     content: string;
+    timestamp?: number;
+}
+
+interface HistoryMessage {
+    role?: string;
+    content?: string;
     timestamp?: number;
 }
 
@@ -33,16 +42,26 @@ export function AiButler() {
             const res = await aiChatApi.getHistory();
             if (res.data) {
                 setSummary(res.data.summary);
-                // Type safety check
-                const hist = res.data.history.map((m: any) => ({
-                    role: m.role as 'user' | 'model' | 'system',
-                    content: m.content,
-                    timestamp: m.timestamp
-                }));
+                const hist = res.data.history
+                    .map((item) => {
+                        const m = item as HistoryMessage;
+                        if (!m || typeof m.content !== 'string') {
+                            return null;
+                        }
+                        if (m.role !== 'user' && m.role !== 'model' && m.role !== 'system') {
+                            return null;
+                        }
+                        return {
+                            role: m.role,
+                            content: m.content,
+                            timestamp: m.timestamp,
+                        } as Message;
+                    })
+                    .filter((item): item is Message => item !== null);
                 setMessages(hist);
             }
-        } catch (e: any) {
-            console.error(e);
+        } catch (error) {
+            console.error(error);
             setError('加载历史记录失败');
         }
     };
@@ -57,7 +76,6 @@ export function AiButler() {
         setError('');
 
         try {
-            // Get current AI profile
             const profiles = getAiProfiles();
             const profile = profiles.find(p => p.isDefault) || profiles[0];
 
@@ -76,23 +94,17 @@ export function AiButler() {
             if (res.data) {
                 const modelMsg: Message = { role: 'model', content: res.data.reply, timestamp: Date.now() };
                 setMessages(prev => [...prev, modelMsg]);
-
-                if (res.data.context_updated) {
-                    // Refresh summary if updated (optional, could just wait for next reload)
-                    // loadHistory(); 
-                }
             }
-        } catch (e: any) {
-            console.error(e);
-            setError(e.message || '发送失败');
-            // Remove optimistic message if needed, or show error
+        } catch (error) {
+            console.error(error);
+            setError(error instanceof Error ? error.message : '发送失败');
         } finally {
             setLoading(false);
         }
     };
 
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 100px)' }}>
+        <div className={styles.container}>
             <div className="page-header">
                 <div>
                     <h1 className="page-title">🤖 智能管家</h1>
@@ -100,41 +112,42 @@ export function AiButler() {
                 </div>
             </div>
 
-            <div className="card" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 0 }}>
+            <div className={`card ${styles.chatCard}`}>
                 {/* Summary Banner */}
                 {summary && (
-                    <div style={{ padding: '12px 24px', background: 'rgba(var(--primary-rgb), 0.05)', borderBottom: '1px solid var(--border)', fontSize: '0.9em', color: 'var(--text-secondary)' }}>
+                    <div className={styles.summaryBanner}>
                         <strong>🧠 记忆摘要:</strong> {summary}
                     </div>
                 )}
 
                 {/* Messages Area */}
-                <div style={{ flex: 1, overflowY: 'auto', padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div className={styles.messagesArea}>
                     {messages.length === 0 && !loading && (
-                        <div style={{ textAlign: 'center', color: 'var(--text-muted)', marginTop: '40px' }}>
+                        <div className={styles.emptyState}>
                             👋 你好！我是您的智能管家。有什么可以帮您的吗？
                         </div>
                     )}
 
                     {messages.filter(m => m.role !== 'system').map((msg, idx) => (
-                        <div key={idx} style={{
-                            alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start',
-                            maxWidth: '70%',
-                        }}>
-                            <div style={{
-                                padding: '12px 16px',
-                                borderRadius: '12px',
-                                borderTopRightRadius: msg.role === 'user' ? '2px' : '12px',
-                                borderTopLeftRadius: msg.role === 'model' ? '2px' : '12px',
-                                background: msg.role === 'user' ? 'var(--primary)' : 'var(--bg-hover)',
-                                color: msg.role === 'user' ? 'white' : 'var(--text-primary)',
-                                whiteSpace: 'pre-wrap',
-                                boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
-                            }}>
-                                {msg.content}
+                        <div
+                            key={idx}
+                            className={`${styles.messageWrapper} ${msg.role === 'user' ? styles.messageWrapperUser : styles.messageWrapperModel
+                                }`}
+                        >
+                            <div
+                                className={`${styles.messageBubble} ${msg.role === 'user' ? styles.messageBubbleUser : styles.messageBubbleModel
+                                    }`}
+                            >
+                                <MarkdownRenderer
+                                    content={msg.content}
+                                    className={msg.role === 'user' ? 'user-message' : ''}
+                                />
                             </div>
                             {msg.timestamp && (
-                                <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '4px', textAlign: msg.role === 'user' ? 'right' : 'left' }}>
+                                <div
+                                    className={`${styles.messageTimestamp} ${msg.role === 'user' ? styles.messageTimestampUser : styles.messageTimestampModel
+                                        }`}
+                                >
                                     {new Date(msg.timestamp).toLocaleTimeString()}
                                 </div>
                             )}
@@ -142,13 +155,13 @@ export function AiButler() {
                     ))}
 
                     {loading && (
-                        <div style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-muted)', padding: '12px' }}>
+                        <div className={styles.loadingState}>
                             <span className="spinner-sm"></span> 正在思考...
                         </div>
                     )}
 
                     {error && (
-                        <div style={{ alignSelf: 'center', color: 'var(--error)', fontSize: '0.9em', padding: '8px' }}>
+                        <div className={styles.errorState}>
                             ❌ {error}
                         </div>
                     )}
@@ -157,9 +170,10 @@ export function AiButler() {
                 </div>
 
                 {/* Input Area */}
-                <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', background: 'var(--bg-card)' }}>
-                    <div style={{ display: 'flex', gap: '12px' }}>
+                <div className={styles.inputArea}>
+                    <div className={styles.inputWrapper}>
                         <textarea
+                            className={styles.textarea}
                             value={input}
                             onChange={(e) => setInput(e.target.value)}
                             onKeyDown={(e) => {
@@ -169,28 +183,17 @@ export function AiButler() {
                                 }
                             }}
                             placeholder="告诉管家您的安排或习惯..."
-                            style={{
-                                flex: 1,
-                                height: '50px',
-                                padding: '12px',
-                                borderRadius: '8px',
-                                border: '1px solid var(--border)',
-                                background: 'var(--bg-page)',
-                                color: 'var(--text-primary)',
-                                resize: 'none',
-                                fontFamily: 'inherit'
-                            }}
                         />
-                        <button
-                            className="btn btn-primary"
+                        <Button
+                            variant="primary"
                             onClick={handleSend}
                             disabled={loading || !input.trim()}
-                            style={{ padding: '0 24px', borderRadius: '8px' }}
+                            loading={loading}
                         >
                             发送
-                        </button>
+                        </Button>
                     </div>
-                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '8px', textAlign: 'center' }}>
+                    <div className={styles.footerHint}>
                         您的对话会被智能分析并提取为记忆，以提供更个性化的服务。
                     </div>
                 </div>

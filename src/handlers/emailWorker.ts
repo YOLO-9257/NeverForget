@@ -40,12 +40,20 @@ async function parseEmailContent(raw: ReadableStream): Promise<{ subject: string
     while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        chunks.push(value);
+        if (value) {
+            chunks.push(value);
+        }
     }
 
-    const rawContent = new TextDecoder().decode(
-        new Uint8Array(chunks.reduce((acc, chunk) => acc + chunk.length, 0))
-    );
+    const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
+    const merged = new Uint8Array(totalLength);
+    let offset = 0;
+    for (const chunk of chunks) {
+        merged.set(chunk, offset);
+        offset += chunk.length;
+    }
+
+    const rawContent = new TextDecoder().decode(merged);
 
     // 简单解析邮件头部和正文
     const parts = rawContent.split('\r\n\r\n');
@@ -147,8 +155,9 @@ export async function handleEmail(message: EmailMessage, env: Env): Promise<void
         if (settings.forward_rules) {
             try {
                 const rules = JSON.parse(settings.forward_rules) as ForwardRules;
-                if (!shouldForwardEmail(emailData, rules)) {
-                    console.log(`[Email Worker] 邮件被过滤规则拦截: ${subject}`);
+                const decision = shouldForwardEmail(emailData, rules);
+                if (!decision.allowed) {
+                    console.log(`[Email Worker] 邮件被过滤规则拦截: ${subject} (${decision.reason || 'unknown'})`);
                     return;
                 }
             } catch (e) {

@@ -1,0 +1,158 @@
+/**
+ * Step1Template 样式
+ * @author zhangws
+ */
+
+/* 智能输入入口 */
+.nlpEntry {
+    background: linear-gradient(135deg, hsl(245 50% 25%) 0%, hsl(280 50% 20%) 100%);
+    border: 2px dashed hsl(245 50% 40%);
+    border-radius: 16px;
+    padding: 24px;
+    margin-bottom: 24px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.nlpEntry:hover {
+    border-color: var(--primary);
+    transform: translateY(-2px);
+}
+
+.nlpIcon {
+    font-size: 40px;
+}
+
+.nlpContent {
+    flex: 1;
+}
+
+.nlpTitle {
+    margin: 0;
+    font-size: 18px;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+}
+
+.nlpDesc {
+    margin: 0;
+    font-size: 14px;
+    color: var(--text-muted);
+}
+
+.nlpArrow {
+    font-size: 24px;
+    color: var(--primary);
+}
+
+.nlpInputWrapper {
+    margin-bottom: 24px;
+}
+
+/* 分割线 */
+.divider {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 24px;
+    color: var(--text-muted);
+    font-size: 14px;
+}
+
+.dividerLine {
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+}
+
+/* 模板网格 */
+.templateGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    gap: 24px;
+}
+
+.templateCard {
+    background: var(--bg-glass);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-lg);
+    padding: 24px;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 12px;
+    position: relative;
+    overflow: hidden;
+}
+
+.templateCard::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: var(--template-color, var(--primary));
+}
+
+.templateCard:hover {
+    border-color: var(--glass-border-hover);
+    transform: translateY(-4px);
+    box-shadow: var(--shadow-md);
+}
+
+.templateIcon {
+    font-size: 36px;
+}
+
+.templateName {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.templateDesc {
+    font-size: 13px;
+    color: var(--text-muted);
+    line-height: 1.6;
+}
+
+/* Section title */
+.sectionTitle {
+    margin-top: 32px;
+    margin-bottom: 16px;
+    color: var(--text-muted);
+    font-size: 14px;
+    font-weight: 500;
+}
+
+@media (max-width: 640px) {
+    .templateGrid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+    }
+
+    .templateCard {
+        padding: 16px;
+    }
+
+    .templateIcon {
+        font-size: 28px;
+    }
+
+    .templateName {
+        font-size: 13px;
+    }
+
+    .nlpEntry {
+        padding: 16px;
+        flex-direction: column;
+        text-align: center;
+    }
+}

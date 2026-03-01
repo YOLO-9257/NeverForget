@@ -1,0 +1,62 @@
+/**
+ * Skeleton 组件样式
+ * @author zhangws
+ */
+
+.skeleton {
+    background: var(--bg-surface);
+    border-radius: var(--radius-sm);
+    position: relative;
+    overflow: hidden;
+}
+
+.circle {
+    border-radius: 50%;
+}
+
+.animate {
+    background: linear-gradient(90deg,
+            var(--bg-surface) 0%,
+            var(--bg-glass-hover) 50%,
+            var(--bg-surface) 100%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite ease-in-out;
+}
+
+@keyframes shimmer {
+    0% {
+        background-position: 200% 0;
+    }
+
+    100% {
+        background-position: -200% 0;
+    }
+}
+
+/* ========================================
+ * 预设组件样式
+ * ======================================== */
+
+.textWrapper {
+    display: flex;
+    flex-direction: column;
+}
+
+.cardWrapper {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-lg);
+}
+
+.cardHeader {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+}
+
+.cardHeaderText {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    flex: 1;
+}

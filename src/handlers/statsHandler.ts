@@ -8,6 +8,7 @@ import { success, error } from '../utils/response';
 
 /**
  * 获取邮件转发趋势（近7天）
+ * 同步执行次数优先从 task_exec_rollup 读取，fallback 到旧 trigger_logs
  */
 export async function getEmailTrend(env: Env, userKey: string): Promise<Response> {
     try {
@@ -33,30 +34,62 @@ export async function getEmailTrend(env: Env, userKey: string): Promise<Response
             ORDER BY day ASC
         `).bind(SHANGHAI_OFFSET, userKey, weekStart).all<{ day: string; count: number }>();
 
-        // 2. 统计每天同步任务执行次数 (从 trigger_logs 关联到 email_sync 类型的任务)
-        //由于 trigger_logs 只有 reminder_id，我们需要先找出该用户所有的 email_sync 类型的 reminder_id
-        const syncTaskIdsResult = await env.DB.prepare(`
-            SELECT id FROM reminders 
-            WHERE user_key = ? AND type = 'email_sync'
-        `).bind(userKey).all<{ id: string }>();
-        const syncTaskIds = (syncTaskIdsResult.results || []).map(r => r.id);
-
+        // 2. 同步执行次数：尝试从 task_exec_rollup 读取
         let syncStatsMap = new Map<string, number>();
+        let useNewModel = false;
 
-        if (syncTaskIds.length > 0) {
-            const placeholders = syncTaskIds.map(() => '?').join(',');
-            const syncLogsResult = await env.DB.prepare(`
-                SELECT 
-                    date((triggered_at + ?) / 1000, 'unixepoch') as day,
-                    COUNT(*) as count
-                FROM trigger_logs
-                WHERE reminder_id IN (${placeholders})
-                  AND status = 'success'
-                  AND triggered_at >= ?
+        try {
+            const weekBucketStart = (() => {
+                const d = new Date(weekStart + SHANGHAI_OFFSET);
+                const year = d.getUTCFullYear();
+                const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+                const day = String(d.getUTCDate()).padStart(2, '0');
+                return `${year}-${month}-${day} 00`;
+            })();
+
+            const rollupResult = await env.DB.prepare(`
+                SELECT
+                    SUBSTR(bucket_hour, 1, 10) as day,
+                    SUM(success_count) as count
+                FROM task_exec_rollup
+                WHERE user_key = ?
+                  AND task_type = 'email_sync'
+                  AND bucket_hour >= ?
                 GROUP BY day
-            `).bind(SHANGHAI_OFFSET, ...syncTaskIds, weekStart).all<{ day: string; count: number }>();
+                ORDER BY day ASC
+            `).bind(userKey, weekBucketStart).all<{ day: string; count: number }>();
 
-            (syncLogsResult.results || []).forEach(r => syncStatsMap.set(r.day, r.count));
+            if (rollupResult.results && rollupResult.results.length > 0) {
+                useNewModel = true;
+                rollupResult.results.forEach(r => syncStatsMap.set(r.day, r.count));
+            }
+        } catch {
+            // Rollup 表不存在或查询失败，使用旧逻辑
+        }
+
+        // Fallback: 从旧 trigger_logs 读取
+        if (!useNewModel) {
+            const syncTaskIdsResult = await env.DB.prepare(`
+                SELECT id FROM reminders 
+                WHERE user_key = ? AND type = 'email_sync'
+            `).bind(userKey).all<{ id: string }>();
+            const syncTaskIds = (syncTaskIdsResult.results || []).map(r => r.id);
+
+            if (syncTaskIds.length > 0) {
+                const placeholders = syncTaskIds.map(() => '?').join(',');
+                const syncLogsResult = await env.DB.prepare(`
+                    SELECT 
+                        date((triggered_at + ?) / 1000, 'unixepoch') as day,
+                        COUNT(*) as count
+                    FROM trigger_logs
+                    WHERE reminder_id IN (${placeholders})
+                      AND status = 'success'
+                      AND triggered_at >= ?
+                    GROUP BY day
+                `).bind(SHANGHAI_OFFSET, ...syncTaskIds, weekStart).all<{ day: string; count: number }>();
+
+                (syncLogsResult.results || []).forEach(r => syncStatsMap.set(r.day, r.count));
+            }
         }
 
         // 3. 合并数据
@@ -80,6 +113,6 @@ export async function getEmailTrend(env: Env, userKey: string): Promise<Response
         return success(dailyStats);
     } catch (e) {
         console.error('[Stats] 获取邮件趋势失败:', e);
-        return error('获取邮件趋势失败', 500);
+        return error('获取邮件趋势失败', 1, 500);
     }
 }

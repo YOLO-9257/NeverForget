@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ExternalAccountsPanel } from '../components/ExternalAccountsPanel';
 import { EmailForwardingPanel } from '../components/EmailForwardingPanel';
+import styles from './EmailHub.module.css';
 
 /**
  * 邮箱中心主页面
@@ -16,40 +17,16 @@ export function EmailHub() {
                 <p className="page-subtitle">统一管理邮件转发服务与外部邮箱同步，实现全方位邮件通知</p>
             </div>
 
-            <div className="tabs" style={{ marginBottom: '24px', borderBottom: '1px solid var(--border)' }}>
+            <div className={styles.tabs}>
                 <button
-                    className={`tab ${activeTab === 'accounts' ? 'active' : ''}`}
+                    className={`${styles.tab} ${activeTab === 'accounts' ? styles.tabActive : ''}`}
                     onClick={() => setActiveTab('accounts')}
-                    style={{
-                        padding: '12px 24px',
-                        cursor: 'pointer',
-                        borderBottom: activeTab === 'accounts' ? '2px solid var(--primary)' : 'none',
-                        color: activeTab === 'accounts' ? 'var(--primary)' : 'var(--text-secondary)',
-                        background: 'transparent',
-                        border: 'none',
-                        borderBottomWidth: '2px',
-                        borderBottomStyle: 'solid',
-                        borderBottomColor: activeTab === 'accounts' ? 'var(--primary)' : 'transparent',
-                        fontWeight: 500
-                    }}
                 >
                     📫 外部邮箱 (External Mailboxes)
                 </button>
                 <button
-                    className={`tab ${activeTab === 'forwarding' ? 'active' : ''}`}
+                    className={`${styles.tab} ${activeTab === 'forwarding' ? styles.tabActive : ''}`}
                     onClick={() => setActiveTab('forwarding')}
-                    style={{
-                        padding: '12px 24px',
-                        cursor: 'pointer',
-                        borderBottom: activeTab === 'forwarding' ? '2px solid var(--primary)' : 'none',
-                        color: activeTab === 'forwarding' ? 'var(--primary)' : 'var(--text-secondary)',
-                        background: 'transparent',
-                        border: 'none',
-                        borderBottomWidth: '2px',
-                        borderBottomStyle: 'solid',
-                        borderBottomColor: activeTab === 'forwarding' ? 'var(--primary)' : 'transparent',
-                        fontWeight: 500
-                    }}
                 >
                     📨 转发服务 (Forwarding Service)
                 </button>
@@ -59,12 +36,6 @@ export function EmailHub() {
                 {activeTab === 'accounts' && <ExternalAccountsPanel />}
                 {activeTab === 'forwarding' && <EmailForwardingPanel />}
             </div>
-
-            <style>{`
-                .tab:hover {
-                    color: var(--primary) !important;
-                }
-            `}</style>
         </div>
     );
 }

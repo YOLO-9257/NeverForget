@@ -11,6 +11,83 @@
 import { Env, EmailSummaryResult, AIExtractedEntity, AIProcessingQueue, FetchedEmailExtended, AiMessage } from '../types';
 import { success, badRequest, notFound, serverError } from '../utils/response';
 import { callLlmInWorker } from '../utils/aiClient';
+import { resolveAiConfigForAccount } from '../services/aiConfigResolver';
+
+function parseEntities(raw?: string | null): AIExtractedEntity[] {
+    if (!raw) return [];
+    try {
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+    } catch {
+        return [];
+    }
+}
+
+function parseActionItems(raw?: string | null): string[] {
+    if (!raw) return [];
+    try {
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed.filter(item => typeof item === 'string') : [];
+    } catch {
+        return [];
+    }
+}
+
+function normalizeSummaryResult(input: Partial<EmailSummaryResult> | null | undefined, fallbackTitle: string): EmailSummaryResult {
+    return {
+        summary: typeof input?.summary === 'string' && input.summary.trim() ? input.summary.trim() : fallbackTitle,
+        entities: Array.isArray(input?.entities) ? input.entities : [],
+        action_items: Array.isArray(input?.action_items) ? input.action_items : [],
+        sentiment: input?.sentiment === 'urgent' || input?.sentiment === 'low' ? input.sentiment : 'normal',
+        importance_score: typeof input?.importance_score === 'number'
+            ? Math.min(1, Math.max(0, input.importance_score))
+            : 0.5,
+    };
+}
+
+export async function getOrGenerateEmailSummaryById(
+    env: Env,
+    userKey: string,
+    emailId: string,
+    forceRefresh: boolean = false
+): Promise<{ result: EmailSummaryResult; cached: boolean; processed_at: number }> {
+    const email = await env.DB.prepare(`
+        SELECT fe.* FROM fetched_emails fe
+        JOIN email_accounts ea ON fe.account_id = ea.id
+        WHERE fe.id = ? AND ea.user_key = ?
+    `).bind(emailId, userKey).first<FetchedEmailExtended>();
+
+    if (!email) {
+        throw new Error('EMAIL_NOT_FOUND');
+    }
+
+    if (email.ai_summary && !forceRefresh) {
+        const result: EmailSummaryResult = {
+            summary: email.ai_summary,
+            entities: parseEntities(email.ai_entities),
+            action_items: parseActionItems(email.ai_action_items),
+            sentiment: email.ai_sentiment || 'normal',
+            importance_score: typeof email.ai_importance_score === 'number' ? email.ai_importance_score : 0.5,
+        };
+
+        return {
+            result: normalizeSummaryResult(result, email.subject || '邮件摘要'),
+            cached: true,
+            processed_at: email.ai_processed_at || Date.now(),
+        };
+    }
+
+    const aiConfig = await resolveAiConfigForAccount(env, userKey, email.account_id);
+    const generated = await generateSummaryWithAI(email, env, aiConfig);
+    const normalized = normalizeSummaryResult(generated, email.subject || '邮件摘要');
+    await saveSummaryToDB(env, emailId, normalized);
+
+    return {
+        result: normalized,
+        cached: false,
+        processed_at: Date.now(),
+    };
+}
 
 /**
  * 生成邮件摘要
@@ -28,43 +105,19 @@ export async function generateEmailSummary(
             return badRequest('缺少必要参数: email_id');
         }
 
-        // 验证邮件所有权
-        const email = await env.DB.prepare(`
-            SELECT fe.* FROM fetched_emails fe
-            JOIN email_accounts ea ON fe.account_id = ea.id
-            WHERE fe.id = ? AND ea.user_key = ?
-        `).bind(email_id, userKey).first<FetchedEmailExtended>();
-
-        if (!email) {
-            return notFound('邮件不存在');
-        }
-
-        // 检查是否已有摘要且不需要刷新
-        if (email.ai_summary && !force_refresh) {
-            return success({
-                summary: email.ai_summary,
-                entities: email.ai_entities ? JSON.parse(email.ai_entities) : [],
-                action_items: email.ai_action_items ? JSON.parse(email.ai_action_items) : [],
-                sentiment: email.ai_sentiment,
-                importance_score: email.ai_importance_score,
-                processed_at: email.ai_processed_at,
-                cached: true,
-            });
-        }
-
-        // 调用AI生成摘要
-        const result = await generateSummaryWithAI(email, env);
-
-        // 保存结果到数据库
-        await saveSummaryToDB(env, email_id, result);
+        const summaryResult = await getOrGenerateEmailSummaryById(env, userKey, email_id, force_refresh);
 
         return success({
-            ...result,
-            cached: false,
+            ...summaryResult.result,
+            cached: summaryResult.cached,
+            processed_at: summaryResult.processed_at,
             processing_time_ms: Date.now(),
         });
     } catch (error) {
         console.error('生成邮件摘要失败:', error);
+        if (error instanceof Error && error.message === 'EMAIL_NOT_FOUND') {
+            return notFound('邮件不存在');
+        }
         return serverError('生成邮件摘要失败');
     }
 }
@@ -74,7 +127,8 @@ export async function generateEmailSummary(
  */
 async function generateSummaryWithAI(
     email: FetchedEmailExtended,
-    env: Env
+    env: Env,
+    aiConfig?: { apiKey?: string; provider?: string; model?: string; baseUrl?: string }
 ): Promise<EmailSummaryResult> {
     const prompt = `请分析以下邮件内容，提供：
 1. 一句话摘要（50字以内）
@@ -94,12 +148,23 @@ async function generateSummaryWithAI(
 
 邮件主题：${email.subject}
 发件人：${email.from_address}
-内容：${email.content.substring(0, 3000)}`; // 限制长度
+    内容：${email.content.substring(0, 3000)}`; // 限制长度
 
     try {
+        const apiKey = aiConfig?.apiKey || env.AI_API_KEY;
+        if (!apiKey) {
+            throw new Error('Missing AI API Key');
+        }
+
         const llmResponse = await callLlmInWorker(
             [{ role: 'user', content: prompt }],
-            { message: prompt, provider: env.AI_PROVIDER || 'gemini', apiKey: env.AI_API_KEY, model: env.AI_MODEL },
+            {
+                message: prompt,
+                provider: (aiConfig?.provider as any) || env.AI_PROVIDER || 'gemini',
+                apiKey,
+                model: aiConfig?.model || env.AI_MODEL,
+                baseUrl: aiConfig?.baseUrl
+            },
             env
         );
 
@@ -109,32 +174,14 @@ async function generateSummaryWithAI(
         const jsonMatch = aiResponse.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
             const parsed = JSON.parse(jsonMatch[0]);
-            return {
-                summary: parsed.summary || '无法生成摘要',
-                entities: parsed.entities || [],
-                action_items: parsed.action_items || [],
-                sentiment: parsed.sentiment || 'normal',
-                importance_score: parsed.importance_score || 0.5,
-            };
+            return normalizeSummaryResult(parsed, email.subject);
         }
 
         // 如果解析失败，返回默认结果
-        return {
-            summary: email.subject,
-            entities: [],
-            action_items: [],
-            sentiment: 'normal',
-            importance_score: 0.5,
-        };
+        return normalizeSummaryResult(null, email.subject);
     } catch (error) {
         console.error('AI摘要生成失败:', error);
-        return {
-            summary: email.subject,
-            entities: [],
-            action_items: [],
-            sentiment: 'normal',
-            importance_score: 0.5,
-        };
+        return normalizeSummaryResult(null, email.subject);
     }
 }
 
@@ -392,13 +439,14 @@ export async function processAIQueue(env: Env, batchSize: number = 10): Promise<
     try {
         // 获取待处理的任务
         const pendingJobs = await env.DB.prepare(`
-            SELECT aq.*, fe.subject, fe.from_address, fe.content
+            SELECT aq.*, fe.account_id, fe.subject, fe.from_address, fe.content, ea.user_key
             FROM ai_processing_queue aq
             JOIN fetched_emails fe ON aq.email_id = fe.id
+            JOIN email_accounts ea ON fe.account_id = ea.id
             WHERE aq.status = 'pending'
             ORDER BY aq.priority DESC, aq.created_at ASC
             LIMIT ?
-        `).bind(batchSize).all<AIProcessingQueue & { subject: string; from_address: string; content: string }>();
+        `).bind(batchSize).all<AIProcessingQueue & { account_id: string; subject: string; from_address: string; content: string; user_key: string }>();
 
         for (const job of pendingJobs.results || []) {
             try {
@@ -423,7 +471,8 @@ export async function processAIQueue(env: Env, batchSize: number = 10): Promise<
                     push_status: 'pending',
                     push_log: null,
                 };
-                const result = await generateSummaryWithAI(emailData, env);
+                const aiConfig = await resolveAiConfigForAccount(env, job.user_key, job.account_id);
+                const result = await generateSummaryWithAI(emailData, env, aiConfig);
 
                 // 保存结果
                 await saveSummaryToDB(env, job.email_id, result);

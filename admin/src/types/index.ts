@@ -36,13 +36,16 @@ export interface Reminder {
 // 执行日志类型
 export interface TriggerLog {
     id: number;
-    reminder_id: string;
+    reminder_id?: string | null;
     triggered_at: number;
     status: 'success' | 'failed';
     response: string | null;
     error: string | null;
     duration_ms: number | null;
-    type?: 'reminder' | 'email';
+    type?: 'reminder' | 'email_sync';
+    source?: 'scheduler' | 'ai_butler';
+    action?: string | null;
+    detail_reason?: string | null;  // 三层日志写入原因标记
 }
 
 // 统计数据类型
@@ -125,4 +128,49 @@ export interface FetchedEmail {
     is_pushed: number;
     push_status: 'pending' | 'success' | 'failed' | 'skipped' | 'filtered';
     push_log: string | null;
+    ai_summary?: string | null;
+    ai_entities?: string | null;
+    ai_action_items?: string | null;
+    ai_sentiment?: 'urgent' | 'normal' | 'low' | null;
+    ai_importance_score?: number | null;
+    ai_processed_at?: number | null;
+}
+
+// 通知渠道类型
+export type NotificationChannelType = 'wechat_work' | 'dingtalk' | 'feishu' | 'webhook' | 'email' | 'pushover';
+
+export interface NotificationChannel {
+    id: number;
+    type: NotificationChannelType;
+    name: string;
+    enabled: number;
+    priority: number;
+    daily_quota: number;
+    daily_used: number;
+    health_status: 'healthy' | 'unhealthy' | 'unknown';
+    health_checked_at?: number;
+    created_at: number;
+    updated_at: number;
+}
+
+export interface PushTrackingRecord {
+    id: number;
+    message_id: string;
+    message_type: 'email' | 'reminder';
+    channel_id: number;
+    channel_type: NotificationChannelType;
+    channel_name?: string;
+    channel_type_name?: NotificationChannelType;
+    title?: string;
+    content_preview?: string;
+    status: 'pending' | 'sending' | 'sent' | 'delivered' | 'read' | 'failed' | 'cancelled';
+    created_at: number;
+    sent_at?: number;
+    failed_at?: number;
+    error_message?: string;
+    retry_count: number;
+    max_retries: number;
+    next_retry_at?: number;
+    provider_message_id?: string;
+    provider_response?: string;
 }

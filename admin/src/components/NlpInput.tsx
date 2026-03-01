@@ -7,7 +7,7 @@ import {
 } from '../utils/nlpParser';
 import { getAiProfiles } from '../utils/ai';
 import type { AiProfile } from '../utils/ai';
-import './NlpInput.css';
+import styles from './NlpInput.module.css';
 
 /**
  * NLP 智能输入组件属性
@@ -21,8 +21,6 @@ interface NlpInputProps {
 /**
  * NLP 智能输入组件
  * 支持自然语言输入，自动解析为调度规则
- *
- * @author zhangws
  */
 export function NlpInput({ onApply, onClose, initialValue = '' }: NlpInputProps) {
     const [input, setInput] = useState(initialValue);
@@ -35,7 +33,6 @@ export function NlpInput({ onApply, onClose, initialValue = '' }: NlpInputProps)
     useEffect(() => {
         const profiles = getAiProfiles();
         setAiProfiles(profiles);
-        // 如果有配置，默认在输入较长时可能启用 AI，这里暂时保持手动开启
     }, []);
 
     // 防抖解析
@@ -44,8 +41,6 @@ export function NlpInput({ onApply, onClose, initialValue = '' }: NlpInputProps)
             setResult(null);
             return;
         }
-
-        // 本地解析（实时）
         const localResult = parseNaturalLanguage(text);
         setResult(localResult);
     }, []);
@@ -64,7 +59,6 @@ export function NlpInput({ onApply, onClose, initialValue = '' }: NlpInputProps)
 
         setIsLoading(true);
         try {
-            // 使用默认配置 (profileId 为 undefined)
             const aiResult = await parseWithLlm(input);
             setResult(aiResult);
         } catch (error) {
@@ -93,21 +87,21 @@ export function NlpInput({ onApply, onClose, initialValue = '' }: NlpInputProps)
     const hasAiConfig = aiProfiles.length > 0;
 
     return (
-        <div className="nlp-input-container">
+        <div className={styles.container}>
             {/* 输入区域 */}
-            <div className="nlp-input-header">
-                <div className="nlp-input-icon">🧠</div>
-                <h3 className="nlp-input-title">智能输入</h3>
+            <div className={styles.header}>
+                <div className={styles.icon}>🧠</div>
+                <h3 className={styles.title}>智能输入</h3>
                 {onClose && (
-                    <button className="nlp-close-btn" onClick={onClose} title="关闭">
+                    <button className={styles.closeBtn} onClick={onClose} title="关闭">
                         ✕
                     </button>
                 )}
             </div>
 
-            <div className="nlp-input-wrapper">
+            <div className={styles.inputWrapper}>
                 <textarea
-                    className="nlp-textarea"
+                    className={styles.textarea}
                     placeholder="用自然语言描述你的提醒时间，例如：&#10;- 明天下午3点提醒我开会&#10;- 每周五下午5点&#10;- 30分钟后&#10;- Remind me tomorrow at 5pm"
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
@@ -116,17 +110,17 @@ export function NlpInput({ onApply, onClose, initialValue = '' }: NlpInputProps)
 
                 {/* AI 增强开关 */}
                 {hasAiConfig && (
-                    <div className="nlp-ai-toggle">
-                        <label className="toggle-switch">
+                    <div className={styles.aiToggle}>
+                        <label className={styles.toggleSwitch}>
                             <input
                                 type="checkbox"
                                 checked={useAi}
                                 onChange={(e) => setUseAi(e.target.checked)}
                             />
-                            <span className="toggle-slider"></span>
+                            <span className={styles.toggleSlider}></span>
                         </label>
-                        <span className="toggle-label">
-                            AI 增强 {useAi && <span className="ai-badge">✨</span>}
+                        <span className={styles.toggleLabel}>
+                            AI 增强 {useAi && <span className={styles.aiBadge}>✨</span>}
                         </span>
                         {useAi && (
                             <button
@@ -146,7 +140,7 @@ export function NlpInput({ onApply, onClose, initialValue = '' }: NlpInputProps)
 
                 {/* 没有配置 LLM 时的提示 */}
                 {!hasAiConfig && (
-                    <div className="nlp-config-hint">
+                    <div className={styles.configHint}>
                         💡 在「设置 → AI 配置」中配置 LLM API 可启用 AI 增强解析
                     </div>
                 )}
@@ -154,63 +148,63 @@ export function NlpInput({ onApply, onClose, initialValue = '' }: NlpInputProps)
 
             {/* 解析结果 */}
             {result && (
-                <div className={`nlp-result ${result.success ? 'success' : 'error'}`}>
+                <div className={`${styles.result} ${result.success ? styles.resultSuccess : styles.resultError}`}>
                     {result.success ? (
                         <>
-                            <div className="nlp-result-header">
-                                <span className="nlp-result-icon">✅</span>
-                                <span className="nlp-result-title">解析成功</span>
-                                <span className="nlp-confidence">
+                            <div className={styles.resultHeader}>
+                                <span className={styles.resultIcon}>✅</span>
+                                <span className={styles.resultTitle}>解析成功</span>
+                                <span className={styles.confidence}>
                                     置信度: {Math.round(result.confidence * 100)}%
                                 </span>
                             </div>
-                            <div className="nlp-result-body">
-                                <div className="nlp-result-item">
-                                    <span className="nlp-result-label">调度类型</span>
-                                    <span className="nlp-result-value">
+                            <div className={styles.resultBody}>
+                                <div className={styles.resultItem}>
+                                    <span className={styles.resultLabel}>调度类型</span>
+                                    <span className={styles.resultValue}>
                                         {getScheduleTypeLabel(result.schedule_type)}
                                     </span>
                                 </div>
                                 {result.schedule_date && (
-                                    <div className="nlp-result-item">
-                                        <span className="nlp-result-label">日期</span>
-                                        <span className="nlp-result-value">{result.schedule_date}</span>
+                                    <div className={styles.resultItem}>
+                                        <span className={styles.resultLabel}>日期</span>
+                                        <span className={styles.resultValue}>{result.schedule_date}</span>
                                     </div>
                                 )}
                                 {result.schedule_time && (
-                                    <div className="nlp-result-item">
-                                        <span className="nlp-result-label">时间</span>
-                                        <span className="nlp-result-value">{result.schedule_time}</span>
+                                    <div className={styles.resultItem}>
+                                        <span className={styles.resultLabel}>时间</span>
+                                        <span className={styles.resultValue}>{result.schedule_time}</span>
                                     </div>
                                 )}
                                 {result.schedule_weekday !== undefined && (
-                                    <div className="nlp-result-item">
-                                        <span className="nlp-result-label">星期</span>
-                                        <span className="nlp-result-value">
+                                    <div className={styles.resultItem}>
+                                        <span className={styles.resultLabel}>星期</span>
+                                        <span className={styles.resultValue}>
                                             {getWeekdayLabel(result.schedule_weekday)}
                                         </span>
                                     </div>
                                 )}
                                 {result.schedule_day !== undefined && (
-                                    <div className="nlp-result-item">
-                                        <span className="nlp-result-label">日期</span>
-                                        <span className="nlp-result-value">每月 {result.schedule_day} 号</span>
+                                    <div className={styles.resultItem}>
+                                        <span className={styles.resultLabel}>日期</span>
+                                        <span className={styles.resultValue}>每月 {result.schedule_day} 号</span>
                                     </div>
                                 )}
                                 {result.title && (
-                                    <div className="nlp-result-item">
-                                        <span className="nlp-result-label">任务标题</span>
-                                        <span className="nlp-result-value">{result.title}</span>
+                                    <div className={styles.resultItem}>
+                                        <span className={styles.resultLabel}>任务标题</span>
+                                        <span className={styles.resultValue}>{result.title}</span>
                                     </div>
                                 )}
                             </div>
-                            <div className="nlp-result-summary">
+                            <div className={styles.resultSummary}>
                                 📅 {getScheduleDescription(result)}
                             </div>
                         </>
                     ) : (
-                        <div className="nlp-result-error">
-                            <span className="nlp-result-icon">⚠️</span>
+                        <div className={styles.resultErrorText}>
+                            <span className={styles.resultIcon}>⚠️</span>
                             <span>{result.errorMessage || '无法解析，请尝试更明确的表述'}</span>
                         </div>
                     )}
@@ -218,13 +212,13 @@ export function NlpInput({ onApply, onClose, initialValue = '' }: NlpInputProps)
             )}
 
             {/* 快捷示例 */}
-            <div className="nlp-examples">
-                <span className="nlp-examples-label">快捷示例：</span>
-                <div className="nlp-examples-list">
+            <div className={styles.examples}>
+                <span className={styles.examplesLabel}>快捷示例：</span>
+                <div className={styles.examplesList}>
                     {examples.map((example, index) => (
                         <button
                             key={index}
-                            className="nlp-example-chip"
+                            className={styles.exampleChip}
                             onClick={() => setInput(example.text)}
                             title={example.desc}
                         >
@@ -235,7 +229,7 @@ export function NlpInput({ onApply, onClose, initialValue = '' }: NlpInputProps)
             </div>
 
             {/* 操作按钮 */}
-            <div className="nlp-actions">
+            <div className={styles.actions}>
                 {onClose && (
                     <button className="btn btn-secondary" onClick={onClose}>
                         取消

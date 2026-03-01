@@ -1,4 +1,14 @@
-import type { Reminder, TriggerLog, Stats, ApiResponse, CreateReminderRequest } from '../types';
+import type {
+    Reminder,
+    TriggerLog,
+    Stats,
+    ApiResponse,
+    CreateReminderRequest,
+    NotificationChannel,
+    PushTrackingRecord,
+} from '../types';
+
+export const AUTH_EXPIRED_EVENT = 'neverforget:auth-expired';
 
 // 动态获取 API 基础 URL
 export function getApiBaseUrl(): string {
@@ -13,6 +23,28 @@ function getAuthToken(): string {
 // 动态获取 Legacy API Key (兼容旧版)
 function getApiKey(): string {
     return localStorage.getItem('api_key') || import.meta.env.VITE_API_KEY || '';
+}
+
+function emitAuthExpired() {
+    if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT));
+    }
+}
+
+async function parseResponseBody<T>(response: Response): Promise<ApiResponse<T> | null> {
+    const text = await response.text();
+    if (!text) {
+        return null;
+    }
+
+    try {
+        return JSON.parse(text) as ApiResponse<T>;
+    } catch {
+        return {
+            code: response.ok ? 0 : response.status,
+            message: text,
+        };
+    }
 }
 
 // 通用请求方法
@@ -36,19 +68,19 @@ async function request<T>(
         },
     });
 
-    const data = await response.json();
+    const data = await parseResponseBody<T>(response);
 
     if (!response.ok) {
         // 401 未授权处理
         if (response.status === 401) {
             // 清除过期 Token
             localStorage.removeItem('auth_token');
-            // 可以选择触发全局事件或跳转，这里简单处理交给调用方或 App.tsx 轮询
+            emitAuthExpired();
         }
-        throw new Error(data.message || '请求失败');
+        throw new Error(data?.message || `请求失败 (${response.status})`);
     }
 
-    return data;
+    return data || { code: 0, message: 'ok' };
 }
 
 // 认证相关 API
@@ -76,23 +108,30 @@ export const authApi = {
         const apiBaseUrl = baseUrl || getApiBaseUrl();
         if (!apiBaseUrl) throw new Error('未配置 API 地址');
 
-        try {
-            const response = await fetch(`${apiBaseUrl}/api/auth/init-status`);
-            if (!response.ok) throw new Error('连接失败');
-            const data = await response.json() as ApiResponse<{ initialized: boolean }>;
-            return data.data || { initialized: false };
-        } catch (error) {
-            throw error;
-        }
+        const response = await fetch(`${apiBaseUrl}/api/auth/init-status`);
+        if (!response.ok) throw new Error('连接失败');
+        const data = await response.json() as ApiResponse<{ initialized: boolean }>;
+        return data.data || { initialized: false };
     }
 };
 
 // 提醒相关 API
 export const reminderApi = {
-    async list(params?: { status?: string; type?: string; limit?: number; offset?: number }) {
+    async list(params?: {
+        status?: string;
+        type?: string;
+        keyword?: string;
+        sortBy?: 'created_at' | 'updated_at' | 'next_trigger_at' | 'trigger_count' | 'title' | 'status';
+        sortOrder?: 'asc' | 'desc';
+        limit?: number;
+        offset?: number;
+    }) {
         const queryParams = new URLSearchParams();
         if (params?.status) queryParams.set('status', params.status);
         if (params?.type) queryParams.set('type', params.type);
+        if (params?.keyword) queryParams.set('keyword', params.keyword);
+        if (params?.sortBy) queryParams.set('sort_by', params.sortBy);
+        if (params?.sortOrder) queryParams.set('sort_order', params.sortOrder);
         if (params?.limit) queryParams.set('limit', params.limit.toString());
         if (params?.offset) queryParams.set('offset', params.offset.toString());
         return request<{ total: number; items: Reminder[] }>(`/api/reminders?${queryParams}`);
@@ -128,6 +167,35 @@ export const logsApi = {
         if (params?.status) queryParams.set('status', params.status);
         if (params?.type) queryParams.set('type', params.type);
         return request<{ total: number; items: TriggerLog[] }>(`/api/logs?${queryParams}`);
+    },
+};
+
+// 通知可观测性 API
+export const notificationApi = {
+    async listChannels() {
+        return request<{ items: NotificationChannel[] }>('/api/notification/channels');
+    },
+    async listPushTracking(params?: {
+        status?: string;
+        channelId?: number;
+        messageType?: 'email' | 'reminder';
+        keyword?: string;
+        limit?: number;
+        offset?: number;
+    }) {
+        const queryParams = new URLSearchParams();
+        if (params?.status) queryParams.set('status', params.status);
+        if (params?.channelId) queryParams.set('channel_id', String(params.channelId));
+        if (params?.messageType) queryParams.set('message_type', params.messageType);
+        if (params?.keyword) queryParams.set('keyword', params.keyword);
+        if (params?.limit) queryParams.set('limit', String(params.limit));
+        if (params?.offset) queryParams.set('offset', String(params.offset));
+        return request<{ total: number; items: PushTrackingRecord[]; status_summary?: Record<string, number> }>(`/api/push/tracking?${queryParams}`);
+    },
+    async retryPush(id: number) {
+        return request<{ message: string }>(`/api/push/tracking/${id}/retry`, {
+            method: 'POST',
+        });
     },
 };
 

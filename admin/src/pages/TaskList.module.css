@@ -1,0 +1,391 @@
+/**
+ * TaskList 页面样式
+ * 使用 CSS Modules 替代内联样式
+ */
+
+/* ========================================
+ * 筛选区域
+ * ======================================== */
+
+.filterContainer {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-bottom: 32px;
+}
+
+.pageHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 48px;
+    /* Further increased for looser layout */
+}
+
+.pageTitle {
+    font-size: 28px;
+    font-weight: 800;
+    color: var(--text-primary);
+    margin-bottom: 8px;
+    letter-spacing: -0.5px;
+    background: linear-gradient(135deg, var(--text-primary), var(--primary-light));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.pageSubtitle {
+    font-size: 14px;
+    color: var(--text-muted);
+    font-weight: 500;
+}
+
+.statusTabs {
+    flex: 1;
+    min-width: 320px;
+    /* 稍微增加宽度以容纳4个选项 */
+}
+
+.typeTabs {
+    min-width: 240px;
+}
+
+.toolbar {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+}
+
+.searchGroup {
+    display: flex;
+    gap: 10px;
+    flex: 1;
+    min-width: 320px;
+}
+
+.searchInput {
+    min-width: 260px;
+    max-width: 480px;
+}
+
+.sortGroup {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.sortSelect {
+    min-width: 150px;
+}
+
+.batchToolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+    margin-bottom: 12px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    background: hsla(var(--primary-hue), 90%, 65%, 0.08);
+}
+
+.batchInfo {
+    font-size: 13px;
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.batchActions {
+    display: flex;
+    gap: 8px;
+}
+
+/* ========================================
+ * 表格内容
+ * ======================================== */
+
+.taskTitleLink {
+    font-weight: 500;
+    color: var(--text-primary);
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.taskTitleLink:hover {
+    color: var(--primary);
+    text-decoration: underline;
+}
+
+.taskContentPreview {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
+.emailSyncBadge {
+    background: rgba(var(--primary-rgb), 0.1);
+    color: var(--primary);
+}
+
+.scheduleTimeCell {
+    font-family: var(--font-mono);
+    font-size: 13px;
+}
+
+/* ========================================
+ * 状态列
+ * ======================================== */
+
+.statusColumn {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.ackIndicator {
+    font-size: 11px;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.ackPending {
+    color: #e11d48;
+}
+
+.ackCompleted {
+    color: #16a34a;
+}
+
+.ackDefault {
+    color: #64748b;
+}
+
+/* ========================================
+ * 操作列
+ * ======================================== */
+
+.actionsWrapper {
+    display: flex;
+    gap: 4px;
+    justify-content: flex-start;
+}
+
+.triggerBtn {
+    color: var(--success);
+}
+
+.triggerBtn:hover {
+    background: rgba(var(--success-rgb), 0.1);
+}
+
+.deleteBtn {
+    color: var(--error);
+}
+
+.deleteBtn:hover {
+    background: rgba(var(--error-rgb), 0.1);
+}
+
+.deleteBtnDisabled {
+    color: var(--error);
+    opacity: 0.3;
+    cursor: not-allowed;
+}
+
+/* ========================================
+ * 分页
+ * ======================================== */
+
+.pagination {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 0;
+    border-top: 1px solid var(--border);
+    margin-top: 16px;
+}
+
+.paginationInfo {
+    font-size: 14px;
+    color: var(--text-muted);
+}
+
+.paginationButtons {
+    display: flex;
+    gap: 8px;
+}
+
+/* ========================================
+ * 表格宽松布局优化
+ * ======================================== */
+
+.taskListTable {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+}
+
+.taskListTable th {
+    padding: 20px 24px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+    background: transparent;
+}
+
+.taskListTable td {
+    padding: 24px;
+    vertical-align: middle;
+    border-bottom: 1px solid var(--border-light);
+    transition: background-color 0.2s ease;
+}
+
+.taskListTable tr:last-child td {
+    border-bottom: none;
+}
+
+/* 任务信息列（标题+预览+标签） */
+.taskInfoCell {
+    min-width: 300px;
+    max-width: 450px;
+}
+
+.taskHeader {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 6px;
+}
+
+.taskTitleLink {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+    text-decoration: none;
+    cursor: pointer;
+    transition: color 0.2s;
+}
+
+.taskTitleLink:hover {
+    color: var(--primary);
+}
+
+.taskContentPreview {
+    font-size: 13px;
+    color: var(--text-muted);
+    line-height: 1.5;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+}
+
+/* 时间调度列 */
+.scheduleCell {
+    min-width: 180px;
+}
+
+.scheduleMain {
+    font-family: var(--font-mono);
+    font-size: 14px;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.scheduleSub {
+    font-size: 12px;
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+/* 状态统计列 */
+.statusCell {
+    min-width: 120px;
+}
+
+.statusRow {
+    margin-bottom: 6px;
+}
+
+.statCount {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+/* 操作列 */
+.actionsCell {
+    text-align: right;
+    white-space: nowrap;
+}
+
+.actionsWrapper {
+    display: flex;
+    gap: 12px;
+    /* 增加间距 */
+    justify-content: flex-end;
+    /* 靠右对齐 */
+    opacity: 0.7;
+    transition: opacity 0.2s;
+}
+
+.taskListTable tr:hover .actionsWrapper {
+    opacity: 1;
+}
+
+/* 按钮悬停增强 */
+.actionBtn {
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    transition: all 0.2s;
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text-secondary);
+}
+
+.actionBtn:hover {
+    background: var(--bg-elevated);
+    border-color: var(--border);
+    color: var(--primary);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.deleteBtn:hover {
+    color: var(--error);
+    background: rgba(var(--error-rgb), 0.1);
+    border-color: rgba(var(--error-rgb), 0.2);
+}
+
+.triggerBtn:hover {
+    color: var(--success);
+    background: rgba(var(--success-rgb), 0.1);
+    border-color: rgba(var(--success-rgb), 0.2);
+}
+
+.selectColumn {
+    width: 46px;
+    text-align: center;
+    padding-left: 12px !important;
+    padding-right: 12px !important;
+}
+
+.selectColumn input[type='checkbox'] {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--primary);
+    cursor: pointer;
+}

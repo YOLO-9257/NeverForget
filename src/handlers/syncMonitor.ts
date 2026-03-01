@@ -140,6 +140,15 @@ export async function getSyncStatistics(
             return badRequest('缺少必要参数: account_id');
         }
 
+        // 验证账户所有权
+        const account = await env.DB.prepare(`
+            SELECT id FROM email_accounts WHERE id = ? AND user_key = ?
+        `).bind(accountId, userKey).first();
+
+        if (!account) {
+            return notFound('账户不存在');
+        }
+
         const startDate = new Date();
         startDate.setDate(startDate.getDate() - days);
         const dateStr = startDate.toISOString().split('T')[0];

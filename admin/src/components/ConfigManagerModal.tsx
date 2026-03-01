@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { configApi, type SavedConfig } from '../api';
+import styles from './ConfigManagerModal.module.css';
 
 interface ConfigManagerModalProps {
     isOpen: boolean;
@@ -7,6 +8,7 @@ interface ConfigManagerModalProps {
     category: string;
     title: string;
     onSelect?: (value: string) => void;
+    onUpdate?: () => void;  // 配置更新后的回调
 }
 
 export function ConfigManagerModal({ isOpen, onClose, category, title, onSelect }: ConfigManagerModalProps) {
@@ -16,13 +18,7 @@ export function ConfigManagerModal({ isOpen, onClose, category, title, onSelect 
     const [newValue, setNewValue] = useState('');
     const [adding, setAdding] = useState(false);
 
-    useEffect(() => {
-        if (isOpen) {
-            loadConfigs();
-        }
-    }, [isOpen, category]);
-
-    const loadConfigs = async () => {
+    const loadConfigs = useCallback(async () => {
         try {
             setLoading(true);
             const res = await configApi.list(category);
@@ -34,7 +30,13 @@ export function ConfigManagerModal({ isOpen, onClose, category, title, onSelect 
         } finally {
             setLoading(false);
         }
-    };
+    }, [category]);
+
+    useEffect(() => {
+        if (isOpen) {
+            loadConfigs();
+        }
+    }, [isOpen, loadConfigs]);
 
     const handleAdd = async () => {
         if (!newName.trim() || !newValue.trim()) return;
@@ -62,7 +64,7 @@ export function ConfigManagerModal({ isOpen, onClose, category, title, onSelect 
         try {
             await configApi.delete(id);
             setConfigs(prev => prev.filter(c => c.id !== id));
-        } catch (error) {
+        } catch {
             alert('删除失败');
         }
     };
@@ -70,32 +72,17 @@ export function ConfigManagerModal({ isOpen, onClose, category, title, onSelect 
     if (!isOpen) return null;
 
     return (
-        <div className="modal-overlay" style={{
-            position: 'fixed',
-            top: 0, left: 0, right: 0, bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.5)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 1000
-        }}>
-            <div className="modal-content" style={{
-                background: 'var(--bg-card)',
-                borderRadius: '12px',
-                padding: '24px',
-                width: '100%',
-                maxWidth: '500px',
-                boxShadow: '0 4px 20px rgba(0,0,0,0.2)'
-            }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                    <h3 style={{ margin: 0 }}>管理 {title}</h3>
+        <div className={`modal-overlay ${styles.overlay}`}>
+            <div className={`modal-content ${styles.modal}`}>
+                <div className={styles.header}>
+                    <h3 className={styles.title}>管理 {title}</h3>
                     <button onClick={onClose} className="btn btn-ghost btn-sm">✕</button>
                 </div>
 
                 {/* 添加新配置 */}
-                <div style={{ background: 'var(--bg-tertiary)', padding: '16px', borderRadius: '8px', marginBottom: '16px' }}>
-                    <h4 style={{ margin: '0 0 12px 0', fontSize: '14px' }}>添加新{title}</h4>
-                    <div className="form-group" style={{ marginBottom: '8px' }}>
+                <div className={styles.addSection}>
+                    <h4 className={styles.addTitle}>添加新{title}</h4>
+                    <div className={`form-group ${styles.formGroup}`}>
                         <input
                             type="text"
                             className="form-input"
@@ -104,7 +91,7 @@ export function ConfigManagerModal({ isOpen, onClose, category, title, onSelect 
                             onChange={e => setNewName(e.target.value)}
                         />
                     </div>
-                    <div className="form-group" style={{ marginBottom: '8px' }}>
+                    <div className={`form-group ${styles.formGroup}`}>
                         <input
                             type="text"
                             className="form-input"
@@ -114,8 +101,7 @@ export function ConfigManagerModal({ isOpen, onClose, category, title, onSelect 
                         />
                     </div>
                     <button
-                        className="btn btn-primary btn-sm"
-                        style={{ width: '100%' }}
+                        className={`btn btn-primary btn-sm ${styles.addButton}`}
                         onClick={handleAdd}
                         disabled={adding}
                     >
@@ -124,30 +110,20 @@ export function ConfigManagerModal({ isOpen, onClose, category, title, onSelect 
                 </div>
 
                 {/* 列表 */}
-                <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
+                <div className={styles.listContainer}>
                     {loading ? (
-                        <div style={{ textAlign: 'center', padding: '20px' }}>加载中...</div>
+                        <div className={styles.loadingText}>加载中...</div>
                     ) : configs.length === 0 ? (
-                        <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '20px' }}>暂无保存的配置</div>
+                        <div className={styles.emptyText}>暂无保存的配置</div>
                     ) : (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        <div className={styles.configList}>
                             {configs.map(config => (
-                                <div key={config.id} style={{
-                                    display: 'flex',
-                                    justifyContent: 'space-between',
-                                    alignItems: 'center',
-                                    padding: '12px',
-                                    background: 'var(--bg-page)',
-                                    borderRadius: '8px',
-                                    border: '1px solid var(--border)'
-                                }}>
-                                    <div style={{ overflow: 'hidden' }}>
-                                        <div style={{ fontWeight: 600 }}>{config.name}</div>
-                                        <div style={{ fontSize: '12px', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
-                                            {config.value}
-                                        </div>
+                                <div key={config.id} className={styles.configItem}>
+                                    <div className={styles.configInfo}>
+                                        <div className={styles.configName}>{config.name}</div>
+                                        <div className={styles.configValue}>{config.value}</div>
                                     </div>
-                                    <div style={{ display: 'flex', gap: '8px' }}>
+                                    <div className={styles.configActions}>
                                         {onSelect && (
                                             <button
                                                 className="btn btn-secondary btn-xs"
@@ -160,8 +136,7 @@ export function ConfigManagerModal({ isOpen, onClose, category, title, onSelect 
                                             </button>
                                         )}
                                         <button
-                                            className="btn btn-ghost btn-xs"
-                                            style={{ color: 'var(--error)' }}
+                                            className={`btn btn-ghost btn-xs ${styles.deleteBtn}`}
                                             onClick={() => handleDelete(config.id)}
                                         >
                                             删除
