@@ -1,239 +1,197 @@
-# NeverForget - 分布式低成本定时提醒系统
+# NeverForget
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Cloudflare Workers](https://img.shields.io/badge/Platform-Cloudflare_Workers-orange.svg)](https://workers.cloudflare.com/)
+NeverForget 是一个基于 Cloudflare Workers 的提醒与邮件自动化系统。
 
-基于 **Cloudflare Workers** 的免费定时提醒服务，配合 **go-wxpush** 实现微信消息推送。
+它不仅支持传统定时提醒，还包含邮箱同步、邮件 AI 摘要、工作流规则、多渠道通知追踪，以及 React 管理后台。
 
-## ✨ 特性
+## 当前功能范围
 
-- 🆓 **完全免费** - 基于 Cloudflare 免费套餐，零成本运行
-- ⏰ **定时提醒** - 支持一次性、每日、每周、每月等多种调度模式
-- 🌍 **全球边缘** - 部署在 Cloudflare 全球边缘网络，低延迟
-- 📱 **微信推送** - 通过 go-wxpush 发送微信模板消息
-- 🔒 **安全可靠** - API Key 认证，敏感数据安全存储
+### 后端（Workers）
+- 定时提醒 CRUD（一次性 / 每日 / 每周 / 每月 / Cron）
+- Cron 每分钟调度执行
+- 提醒确认回调（`ack`）与手动触发
+- 全局执行日志与统计（含三层日志模型）
+- 邮箱账户管理（IMAP）与手动/自动同步
+- Email Routing 入站邮件接收与转发
+- 邮件黑名单与过滤规则
+- 邮件 AI 解析、摘要、待办提取、从邮件创建提醒
+- AI 对话管家（带上下文记忆）
+- 多渠道通知与推送追踪（重试、健康检查）
+- 邮件工作流规则（条件 + 动作 + 执行记录）
 
-## 🏗 架构
+### 前端（admin）
+- 登录/初始化（首个管理员账户创建）
+- 仪表盘、任务管理、任务创建向导
+- 邮箱中心（外部邮箱、转发服务）
+- 智能管家、通知中心、执行日志
+- 模板管理、系统设置（API/推送/AI 模型池）
 
+## 技术栈
+
+- 后端：Cloudflare Workers + D1 + TypeScript
+- 前端：React 19 + TypeScript + Vite
+- 调度：Workers Cron Trigger（`* * * * *`）
+- 邮件：Cloudflare Email Routing + IMAP 拉取
+
+## 目录结构
+
+```text
+.
+├─ src/                # Workers 后端
+├─ migrations/         # D1 迁移脚本（0001 ~ 0026）
+├─ admin/              # React 管理后台
+├─ docs/               # 设计与 API 说明
+├─ tests/              # 单元测试
+├─ wrangler.toml.example # 提交到仓库的配置模板
+├─ wrangler.toml         # 本地真实配置（已忽略）
+└─ package.json
 ```
-┌─────────────────────────────────────────────────────┐
-│           Cloudflare Workers (本项目)               │
-│  ┌─────────────┐  ┌─────────────┐  ┌───────────┐  │
-│  │  REST API   │  │ Cron Trigger│  │ D1 SQLite │  │
-│  │  提醒管理    │  │  每分钟检查  │  │ 任务存储   │  │
-│  └─────────────┘  └─────────────┘  └───────────┘  │
-└─────────────────────────────────────────────────────┘
-                         │
-                         ▼ HTTP
-┌─────────────────────────────────────────────────────┐
-│              go-wxpush 推送服务                      │
-│                   /wxsend                           │
-└─────────────────────────────────────────────────────┘
-```
 
-## 🚀 部署指南
+## 快速开始
 
-### 前置条件
-
-1. [Cloudflare 账号](https://dash.cloudflare.com/sign-up)
-2. 已部署的 go-wxpush 服务
-
-### 步骤 1: 安装依赖
+### 1. 安装依赖
 
 ```bash
 npm install
+cd admin && npm install
 ```
 
-### 步骤 2: 登录 Cloudflare
+### 2. 配置 Cloudflare 与 D1
 
 ```bash
 npx wrangler login
-```
-
-### 步骤 3: 创建 D1 数据库
-
-```bash
-# 创建数据库
 npx wrangler d1 create reminder-db
-
-# 记下返回的 database_id，更新到 wrangler.toml 中
 ```
 
-### 步骤 4: 更新配置
-
-编辑 `wrangler.toml`，替换以下值：
-
-```toml
-[[d1_databases]]
-binding = "DB"
-database_name = "reminder-db"
-database_id = "your-actual-database-id"  # 替换为实际 ID
-
-[vars]
-DEFAULT_PUSH_URL = "https://your-push-server.com/wxsend"  # 替换为你的推送服务地址
-```
-
-### 步骤 5: 初始化数据库
+先从模板复制本地配置文件：
 
 ```bash
-# 远程环境
-npx wrangler d1 execute reminder-db --file=./migrations/0001_init.sql
-
-# 或本地开发
-npx wrangler d1 execute reminder-db --local --file=./migrations/0001_init.sql
+cp wrangler.toml.example wrangler.toml
 ```
 
-### 步骤 6: 配置 API Key
+PowerShell 可用：
+
+```powershell
+Copy-Item .\wrangler.toml.example .\wrangler.toml
+```
+
+将返回的 `database_id` 写入本地 `wrangler.toml` 的 `[[d1_databases]]`。
+
+### 3. 配置 `wrangler.toml` 变量
+
+必须检查并按实际环境修改：
+
+- `WORKER_BASE_URL`
+- `PUSH_SERVICE_URL`
+- `TIMEZONE`
+- `EMAIL_DOMAIN`（如启用入站邮件）
+
+### 4. 执行数据库迁移
+
+完整功能依赖 `migrations/` 全量 SQL。
+
+PowerShell（远程）：
+
+```powershell
+Get-ChildItem ./migrations/*.sql |
+  Sort-Object Name |
+  ForEach-Object { npx wrangler d1 execute reminder-db --remote --file=$_.FullName }
+```
+
+PowerShell（本地）：
+
+```powershell
+Get-ChildItem ./migrations/*.sql |
+  Sort-Object Name |
+  ForEach-Object { npx wrangler d1 execute reminder-db --local --file=$_.FullName }
+```
+
+### 5. 配置 Secrets（推荐）
 
 ```bash
-# 设置 API Key（多个用逗号分隔）
+npx wrangler secret put JWT_SECRET
+npx wrangler secret put ENCRYPTION_KEY
 npx wrangler secret put API_KEYS
-# 输入: your-api-key-1,your-api-key-2
+# 如启用全局 AI
+npx wrangler secret put AI_API_KEY
 ```
 
-### 步骤 7: 部署
+说明：
+- `JWT_SECRET`：管理员登录签发 Token 的密钥。
+- `ENCRYPTION_KEY`：IMAP 密码加密存储密钥。
+- `API_KEYS`：旧版兼容认证（可选）。
+- `AI_API_KEY`：AI 摘要/管家默认密钥（可选）。
+
+### 6. 本地开发
+
+后端：
 
 ```bash
-npx wrangler deploy
-```
-
-部署成功后会返回 Workers URL，如：`https://never-forget.your-account.workers.dev`
-
-## 📖 API 文档
-
-### 认证
-
-所有 API 请求需要在 Header 中携带 API Key：
-
-```
-Authorization: Bearer your-api-key
-```
-
-### 创建提醒
-
-```http
-POST /api/reminders
-Content-Type: application/json
-
-{
-  "title": "喝水提醒",
-  "content": "该喝水啦！保持健康~",
-  "schedule_type": "daily",
-  "schedule_time": "09:00",
-  "timezone": "Asia/Shanghai",
-  "push_config": {
-    "appid": "your-appid",
-    "secret": "your-secret",
-    "userid": "your-userid",
-    "template_id": "your-template-id"
-  }
-}
-```
-
-### 使用详情页模板
-
-`cf-reminder` 本身只提供基础的详情页显示。如果您在 `go-wxpush` 服务中配置了自定义模板，可以通过 `template_name` 字段来引用它：
-
-```http
-POST /api/reminders
-Content-Type: application/json
-
-{
-  "title": "模板提醒",
-  "content": "使用指定的模板展示",
-  "schedule_type": "once",
-  "schedule_date": "2026-01-26",
-  "schedule_time": "10:00",
-  "push_config": {
-    "appid": "your-appid",
-    "secret": "your-secret",
-    "userid": "your-userid",
-    "template_id": "your-template-id"
-  },
-  "template_name": "holiday"  // 对应 go-wxpush 中配置的模板名称
-}
-```
-
-**说明**：
-- 如果 `template_name` 为空，将使用 `go-wxpush` 的默认模板。
-- 管理后台支持从 `go-wxpush` 自动加载可用的模板列表供选择。
-
-### 调度类型说明
-
-| 类型 | schedule_type | 必填参数 | 示例 |
-|------|---------------|----------|------|
-| 一次性 | once | schedule_date, schedule_time | 2026-01-25 09:00 |
-| 每天 | daily | schedule_time | 每天 09:00 |
-| 每周 | weekly | schedule_weekday (0-6), schedule_time | 每周一 09:00 |
-| 每月 | monthly | schedule_day (1-31), schedule_time | 每月 1 号 10:00 |
-| Cron | cron | schedule_cron | `0 9 * * 1-5` |
-
-### 查询提醒列表
-
-```http
-GET /api/reminders?status=active&limit=20&offset=0
-```
-
-### 获取提醒详情
-
-```http
-GET /api/reminders/:id
-```
-
-### 更新提醒
-
-```http
-PUT /api/reminders/:id
-Content-Type: application/json
-
-{
-  "title": "新标题",
-  "status": "paused"
-}
-```
-
-### 删除提醒
-
-```http
-DELETE /api/reminders/:id
-```
-
-### 获取执行日志
-
-```http
-GET /api/reminders/:id/logs?limit=20
-```
-
-### 获取统计信息
-
-```http
-GET /api/stats
-```
-
-## 🔧 本地开发
-
-```bash
-# 启动本地开发服务器
 npm run dev
-
-# 初始化本地数据库
-npm run db:init:local
 ```
 
-访问 http://localhost:8787 进行测试。
+前端：
 
-## 💰 成本估算
+```bash
+cd admin
+npm run dev
+```
 
-| 资源 | 免费额度 | 说明 |
-|------|----------|------|
-| Workers 请求 | 10万/天 | 远超个人使用 |
-| D1 读取 | 500万/天 | 足够使用 |
-| D1 写入 | 10万/天 | 足够使用 |
-| D1 存储 | 5GB | 足够使用 |
-| Cron Triggers | 无限制 | 免费 |
+默认地址：
+- Workers: `http://localhost:8787`
+- Admin: `http://localhost:5173`
 
-**结论**：在合理使用场景下，**完全免费**！
+### 7. 部署
 
-## 📝 License
+```bash
+npm run deploy
+```
+
+前端可构建后部署到 Cloudflare Pages：
+
+```bash
+cd admin
+npm run build
+npx wrangler pages deploy dist --project-name=neverforget-admin
+```
+
+## 认证与初始化
+
+首次使用建议流程：
+
+1. `GET /api/auth/init-status` 检查是否已初始化。
+2. 若未初始化，调用 `POST /api/auth/setup` 创建首个管理员。
+3. 调用 `POST /api/auth/login` 获取 JWT。
+4. 业务 API 使用 `Authorization: Bearer <token>`。
+
+兼容模式：仍支持 `API_KEYS` 作为 Bearer Token。
+
+## 核心 API 分组
+
+- 健康检查：`GET /`、`GET /health`
+- 认证：`/api/auth/*`
+- 提醒：`/api/reminders*`
+- 统计与日志：`/api/stats`、`/api/logs`
+- 邮箱与邮件：`/api/email/*`
+- AI：`/api/ai/chat`、`/api/email/*summary*`
+- 通知：`/api/notification/*`、`/api/push/tracking*`
+- 工作流：`/api/workflow/rules*`
+
+详细接口见 [docs/API_REFERENCE.md](docs/API_REFERENCE.md)。
+
+## 测试与检查
+
+```bash
+npm run test
+npm run typecheck
+```
+
+## 相关文档
+
+- 部署指南：[`DEPLOY_GUIDE.md`](DEPLOY_GUIDE.md)
+- API 文档：[`docs/API_REFERENCE.md`](docs/API_REFERENCE.md)
+- 后台说明：[`admin/README.md`](admin/README.md)
+
+## License
 
 MIT

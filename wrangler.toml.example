@@ -1,0 +1,26 @@
+name = "your-worker-name"
+main = "src/index.ts"
+compatibility_date = "2026-01-17"
+
+# 定时触发器：每分钟执行一次（按需调整）
+[triggers]
+crons = ["* * * * *"]
+
+# D1 数据库绑定（请替换为你自己的数据库信息）
+[[d1_databases]]
+binding = "DB"
+database_name = "your-database-name"
+database_id = "YOUR_D1_DATABASE_ID"
+
+# 环境变量（示例占位符）
+[vars]
+WORKER_BASE_URL = "https://your-worker.example.com"
+PUSH_SERVICE_URL = "https://your-push-service.example.com"
+DEFAULT_PUSH_URL = "https://your-push-service.example.com/wxsend"
+TIMEZONE = "Asia/Shanghai"
+EMAIL_DOMAIN = "example.com"
+
+# 开发环境配置
+[dev]
+port = 8787
+local_protocol = "http"
